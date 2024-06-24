@@ -4,6 +4,10 @@
   "description": "A middleware between a Ghost CMS instance and BunnyCDN, supposed to run in a Docker stack, alongside a Ghost container.",
   "main": "dist/index.js",
   "author": "Jannis Fedoruk-Betschki <jannis@magicpages.co>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/magicpages/ghost-bunnycdn-perma-cache-purger"
+  },
   "license": "MIT",
   "type": "module",
   "devDependencies": {
