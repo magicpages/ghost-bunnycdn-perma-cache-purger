@@ -1,0 +1,7 @@
+# Source: https://github.com/microsoft/TypeScript/blob/main/.gitignore
+node_modules/
+.node_modules/
+dist/
+.dist/
+yarn.lock
+.env
