@@ -7,22 +7,21 @@
   "license": "MIT",
   "type": "module",
   "devDependencies": {
-    "@types/express": "^4.17.21",
+    "@types/express": "4.17.21",
     "@types/node": "20.14.8",
-    "typescript": "5.5.2"
+    "typescript": "5.5.2",
+    "tsc-watch": "6.2.0"
   },
   "dependencies": {
-    "axios": "^1.7.2",
-    "body-parser": "^1.20.2",
-    "chalk": "^5.3.0",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "fastify": "4.28.0",
-    "node-fetch": "^3.3.2"
+    "body-parser": "1.20.2",
+    "dotenv": "16.4.5",
+    "express": "4.19.2",
+    "node-fetch": "3.3.2"
   },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsc && node --watch dist/index.js"
+    "dev": "tsc-watch --noClear -p ./tsconfig.json --onSuccess \"node dist/index.js\"",
+    "ship": "npm version patch && git push && git push --tags"
   }
 }

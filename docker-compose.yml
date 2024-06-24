@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: example
+      MYSQL_DATABASE: ghost
+      MYSQL_USER: ghost
+      MYSQL_PASSWORD: ghost
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  ghost:
+    image: ghost:latest
+    environment:
+      url: http://localhost:2368
+      database__client: mysql
+      database__connection__host: mysql
+      database__connection__user: ghost
+      database__connection__password: ghost
+      database__connection__database: ghost
+    volumes:
+      - ghost_data:/var/lib/ghost/content
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  bunnycdn-perma-cache-purger:
+    image: magicpages/bunnycdn-perma-cache-purger:latest
+    environment:
+      GHOST_URL: http://ghost:2368
+      BUNNYCDN_API_KEY: your_bunnycdn_api_key
+      BUNNYCDN_PULL_ZONE_ID: your_pull_zone_id
+    depends_on:
+      ghost:
+        condition: service_started
+    ports:
+      - "2368:3000"
+
+volumes:
+  ghost_data:
+  mysql_data:
