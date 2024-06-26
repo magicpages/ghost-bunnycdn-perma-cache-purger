@@ -45,6 +45,20 @@ const purgeCache = async (): Promise<void> => {
   }
 };
 
+// Ghost has a middleware implemented that redirects URLs without trailing slashes
+// to URLs with trailing slashes. This middleware replicates that behavior. Otherwise
+// the URL in the browser will be redirected to Bunny's origin URL.
+// @See: https://github.com/magicpages/ghost-bunnycdn-perma-cache-purger/issues/2
+app.use((req, res, next) => {
+  const path = req.path;
+  if (path !== '/' && !path.endsWith('/') && !path.includes('.')) {
+    const query = req.url.slice(path.length);
+    res.redirect(301, `${path}/${query}`);
+    return;
+  }
+  next();
+});
+
 app.use(async (req, res) => {
   let currentUrl = `${GHOST_URL}${req.originalUrl}`;
   const headers = new Headers(req.headers as Record<string, string>);
