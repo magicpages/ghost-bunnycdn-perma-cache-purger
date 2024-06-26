@@ -12,6 +12,9 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@v2
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
 
@@ -32,3 +35,5 @@ jobs:
           push: true
           tags: magicpages/bunnycdn-perma-cache-purger:${{ env.VERSION }},magicpages/bunnycdn-perma-cache-purger:latest
           build-args: VERSION=${{ env.VERSION }}
+          platforms: linux/amd64,linux/arm64
+
