@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
 import http from 'http';
 import https from 'https';
+import path from 'path';
 
 dotenv.config();
 
@@ -50,18 +51,28 @@ const purgeCache = async (): Promise<void> => {
 // the URL in the browser will be redirected to Bunny's origin URL.
 // @See: https://github.com/magicpages/ghost-bunnycdn-perma-cache-purger/issues/2
 app.use((req, res, next) => {
-  const path = req.path;
-  if (path !== '/' && !path.endsWith('/') && !path.includes('.')) {
-    const query = req.url.slice(path.length);
-    res.redirect(301, `${path}/${query}`);
+  const reqPath = req.path;
+
+  // Check if the path does not end with a slash, does not have a file extension, and does not include API endpoints
+  if (
+    reqPath !== '/' &&
+    !reqPath.endsWith('/') &&
+    !path.extname(reqPath) &&
+    !reqPath.includes('/api/')
+  ) {
+    const query = req.url.slice(reqPath.length);
+    res.redirect(301, `${reqPath}/${query}`);
     return;
   }
   next();
 });
 
 app.use(async (req, res) => {
-  let currentUrl = `${GHOST_URL}${req.originalUrl}`;
-  const headers = new Headers(req.headers as Record<string, string>);
+  const currentUrl = `${GHOST_URL}${req.originalUrl}`;
+  const headers = new Headers({
+    ...(req.headers as Record<string, string>),
+    host: new URL(GHOST_URL).host,
+  });
 
   if (req.headers.cookie) {
     headers.set('Cookie', req.headers.cookie);
@@ -74,69 +85,49 @@ app.use(async (req, res) => {
   );
 
   try {
-    while (true) {
-      const response: FetchResponse = await fetch(currentUrl, {
-        method: req.method,
-        headers: {
-          ...Object.fromEntries(headers),
-          host: new URL(GHOST_URL).host,
-        },
-        body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined,
-        redirect: 'manual',
-        agent: currentUrl.startsWith('https') ? httpsAgent : httpAgent,
-      });
+    const response = await fetch(currentUrl, {
+      method: req.method,
+      headers: Object.fromEntries(headers),
+      body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined,
+      redirect: 'manual',
+      agent: currentUrl.startsWith('https') ? httpsAgent : httpAgent,
+    });
 
-      console.info(
-        `${new Date().toISOString()} - Response from ${currentUrl}: ${
-          response.status
-        }`
+    if (
+      response.status >= 300 &&
+      response.status < 400 &&
+      response.headers.get('location')
+    ) {
+      const locationHeader = response.headers.get('location')!;
+      const redirectUrl = new URL(locationHeader, currentUrl).href.replace(
+        GHOST_URL,
+        `http://${req.headers.host}`
       );
-
-      if (
-        response.status >= 300 &&
-        response.status < 400 &&
-        response.headers.get('location')
-      ) {
-        const locationHeader = response.headers.get('location')!;
-        const newLocation = new URL(locationHeader, currentUrl).href;
-
-        // Redirect using the host header from the incoming request to maintain the original domain
-        const redirectUrl = newLocation.replace(
-          GHOST_URL,
-          `http://${req.headers.host}`
-        );
-
-        console.info(
-          `${new Date().toISOString()} - Redirecting to ${redirectUrl}`
-        );
-        res.redirect(response.status, redirectUrl);
-        return;
-      }
-
-      // Set response headers and forward the response
-      res.status(response.status);
-      response.headers.forEach((value, key) => {
-        if (
-          !['content-encoding', 'transfer-encoding', 'content-length'].includes(
-            key
-          )
-        ) {
-          res.setHeader(key, value);
-        }
-      });
-
-      if (response.headers.has('x-cache-invalidate')) {
-        purgeCache();
-      }
-
-      if (response.body) {
-        response.body.pipe(res);
-      } else {
-        res.end();
-      }
+      res.redirect(response.status, redirectUrl);
       return;
     }
-  } catch (error: unknown) {
+
+    res.status(response.status);
+    response.headers.forEach((value, key) => {
+      if (
+        !['content-encoding', 'transfer-encoding', 'content-length'].includes(
+          key
+        )
+      ) {
+        res.setHeader(key, value);
+      }
+    });
+
+    if (response.headers.has('x-cache-invalidate')) {
+      purgeCache();
+    }
+
+    if (response.body) {
+      response.body.pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (error) {
     console.error(
       `${new Date().toISOString()} - Error proxying request to ${currentUrl}:`,
       error
