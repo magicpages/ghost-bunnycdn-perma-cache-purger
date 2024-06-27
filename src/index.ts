@@ -5,6 +5,7 @@ import bodyParser from 'body-parser';
 import http from 'http';
 import https from 'https';
 import path from 'path';
+import { deleteStorageZoneFile, getPullZoneName, listStorageZoneFiles } from './util.js';
 
 dotenv.config();
 
@@ -16,6 +17,9 @@ const PORT = process.env.PORT || 3000;
 const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '');
 const BUNNYCDN_API_KEY = process.env.BUNNYCDN_API_KEY;
 const BUNNYCDN_PULL_ZONE_ID = process.env.BUNNYCDN_PULL_ZONE_ID;
+const BUNNYCDN_PURGE_OLD_CACHE = process.env.BUNNYCDN_PURGE_OLD_CACHE === 'true';
+const BUNNYCDN_STORAGE_ZONE_NAME = process.env.BUNNYCDN_STORAGE_ZONE_NAME;
+const BUNNYCDN_STORAGE_ZONE_PASSWORD = process.env.BUNNYCDN_STORAGE_ZONE_PASSWORD;
 
 if (!GHOST_URL || GHOST_URL === '' || GHOST_URL === 'undefined') {
   console.error('❌ GHOST_URL is required in the environment variables.');
@@ -39,8 +43,89 @@ const httpsAgent = new https.Agent({
   servername: new URL(GHOST_URL).hostname,
 });
 
+// BunnyCDN retains the old cache in the storage zone indefinitely, even after purging
+// a pull zone's cache. While this does not impact the user experience, it can lead to
+// unnecessary storage costs. To avoid this, you can purge the old cache in the storage
+// zone by setting the BUNNYCDN_PURGE_OLD_CACHE environment variable to true and providing
+// the storage zone ID in the BUNNYCDN_STORAGE_ZONE_NAME, as well as the zone's API password.
+// Note: This feature is optional and should only be used if you are aware of the implications.
+const deleteOldCacheDirectories = async (): Promise<void> => {
+  if (
+    !BUNNYCDN_STORAGE_ZONE_NAME ||
+    BUNNYCDN_STORAGE_ZONE_NAME === '' ||
+    BUNNYCDN_STORAGE_ZONE_NAME === 'undefined'
+  ) {
+    console.error(
+      '❌ BUNNYCDN_STORAGE_ZONE_NAME is required in the environment variables, cannot purge old cache.'
+    );
+    process.exit(1);
+  }
+
+  if (
+    !BUNNYCDN_STORAGE_ZONE_PASSWORD ||
+    BUNNYCDN_STORAGE_ZONE_PASSWORD === '' ||
+    BUNNYCDN_STORAGE_ZONE_PASSWORD === 'undefined'
+  ) {
+    console.error(
+      '❌ BUNNYCDN_STORAGE_ZONE_PASSWORD is required in the environment variables, cannot purge old cache.'
+    );
+    process.exit(1);
+  }
+
+  const pullZoneName = await getPullZoneName(
+    BUNNYCDN_PULL_ZONE_ID,
+    BUNNYCDN_API_KEY
+  );
+
+  const permaCacheDirectoryName = '__bcdn_perma_cache__';
+  const permaCacheFolderList = await listStorageZoneFiles(
+    BUNNYCDN_STORAGE_ZONE_NAME,
+    permaCacheDirectoryName,
+    BUNNYCDN_STORAGE_ZONE_PASSWORD
+  );
+
+  if (!Array.isArray(permaCacheFolderList)) {
+    console.error(
+      'Received non-array response from listStorageZoneFiles',
+      permaCacheFolderList
+    );
+    return;
+  }
+
+  const deletePromises = permaCacheFolderList.map((folder) => {
+    if (folder.ObjectName.includes(pullZoneName)) {
+      console.info(`🗑️ Deleting old cache directory: ${folder.ObjectName}`);
+      return deleteStorageZoneFile(
+        BUNNYCDN_STORAGE_ZONE_NAME,
+        permaCacheDirectoryName,
+        folder.ObjectName,
+        BUNNYCDN_STORAGE_ZONE_PASSWORD
+      );
+    }
+    return Promise.resolve();
+  });
+
+  const results = await Promise.allSettled(deletePromises);
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.error(
+        `Failed to delete file: ${permaCacheFolderList[index].ObjectName}`,
+        result.reason
+      );
+    }
+  });
+};
+
 // Function to purge cache on BunnyCDN
 const purgeCache = async (): Promise<void> => {
+  if (BUNNYCDN_PURGE_OLD_CACHE) {
+    try {
+      await deleteOldCacheDirectories();
+    } catch (error) {
+      console.error(`❌ ${new Date().toISOString()} - Failed to delete old cache directories`, error);
+    }
+  }
+
   try {
     const url = `https://api.bunny.net/pullzone/${BUNNYCDN_PULL_ZONE_ID}/purgeCache`;
     const options = {

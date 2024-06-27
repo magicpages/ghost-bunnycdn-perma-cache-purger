@@ -19,10 +19,17 @@ The `magicpages/bunnycdn-perma-cache-purger` Docker image is available on [Docke
 
 ### Environment Variables
 
-- `PORT`: Optional. The port on which the proxy listens for incoming requests. Defaults to `3000`.
+#### Required variables
+
 - `GHOST_URL`: The URL of your Ghost CMS instance. Ideally, the hostname of your Ghost container and the port it listens on (e.g., `http://ghost:2368`).
 - `BUNNYCDN_API_KEY`: Your BunnyCDN API key.
 - `BUNNYCDN_PULL_ZONE_ID`: The ID of the BunnyCDN pull zone that you wish to purge.
+
+#### Optional variables
+- `PORT`: The port on which the proxy listens for incoming requests. Defaults to `3000`.
+- `BUNNYCDN_PURGE_OLD_CACHE`: Set to `true`to enable deleting old cache files from the storage zone.
+- `BUNNYCDN_STORAGE_ZONE_NAME`: Required if `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`. The name of the BunnyCDN storage zone connected to the pull zone.
+- `BUNNYCDN_STORAGE_ZONE_PASSWORD`: Required if `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`. The password of the BunnyCDN storage zone connected to the pull zone. This differs from the API key. See [Bunny's Edge Storage API documentation](https://docs.bunny.net/reference/storage-api) for more information.
 
 These variables must be set in the Docker Compose file or as part of your Docker container configuration.
 
@@ -71,6 +78,9 @@ services:
       GHOST_URL: http://ghost:2368
       BUNNYCDN_API_KEY: your_bunnycdn_api_key
       BUNNYCDN_PULL_ZONE_ID: your_pull_zone_id
+      BUNNYCDN_PURGE_OLD_CACHE: "true"
+      BUNNYCDN_STORAGE_ZONE_NAME: your_storage_zone_name
+      BUNNYCDN_STORAGE_ZONE_PASSWORD: your_storage_zone_password
     depends_on:
       ghost:
         condition: service_started
@@ -87,7 +97,7 @@ In this example, the Ghost CMS instance is accessible at `http://localhost:2368`
 ## How It Works
 In a nutshell, this proxy forwards all incoming requests to the Ghost instance that's specified in the `GHOST_URL` environment variable. All responses from Ghost are forwarded back to the client, while the proxy monitors the responses for the `X-Cache-Invalidate` header.
 
-If the header is present, the proxy sends a purge request to the BunnyCDN API to clear the cache of the specified pull zone.
+If the header is present, the proxy sends a purge request to the BunnyCDN API to clear the cache of the specified pull zone. If `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`, it also deletes old directories from the specified storage zone to manage storage costs effectively.
 
 ### Under the Hood
 The proxy is built using Node.js and a simple Express server. Nothing fancy, just a few lines of code to handle the requests and responses.
