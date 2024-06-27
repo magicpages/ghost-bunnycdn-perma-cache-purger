@@ -12,12 +12,23 @@ const app = express();
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
-const GHOST_URL = process.env.GHOST_URL;
+// remove trailing slash from GHOST_URL for consistency
+const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '');
 const BUNNYCDN_API_KEY = process.env.BUNNYCDN_API_KEY;
 const BUNNYCDN_PULL_ZONE_ID = process.env.BUNNYCDN_PULL_ZONE_ID;
 
-if (!GHOST_URL || !BUNNYCDN_API_KEY || !BUNNYCDN_PULL_ZONE_ID) {
-  console.error(`🚨 You are missing one or more required environment variables.`);
+if (!GHOST_URL || GHOST_URL === '' || GHOST_URL === 'undefined') {
+  console.error('❌ GHOST_URL is required in the environment variables.');
+  process.exit(1);
+}
+
+if (!BUNNYCDN_API_KEY || BUNNYCDN_API_KEY === '' || BUNNYCDN_API_KEY === 'undefined') {
+  console.error('❌ BUNNYCDN_API_KEY is required in the environment variables.');
+  process.exit(1);
+}
+
+if (!BUNNYCDN_PULL_ZONE_ID || BUNNYCDN_PULL_ZONE_ID === '' || BUNNYCDN_PULL_ZONE_ID === 'undefined') {
+  console.error('❌ BUNNYCDN_PULL_ZONE_ID is required in the environment variables.');
   process.exit(1);
 }
 
@@ -31,16 +42,22 @@ const httpsAgent = new https.Agent({
 // Function to purge cache on BunnyCDN
 const purgeCache = async (): Promise<void> => {
   try {
-    await fetch(
-      `https://api.bunny.net/pullzone/${BUNNYCDN_PULL_ZONE_ID}/purgeCache`,
-      {
-        method: 'POST',
-        headers: {
-          AccessKey: BUNNYCDN_API_KEY,
-        },
-      }
-    );
-    console.info(`✅ ${new Date().toISOString()} - Cache purged successfully`);
+    const url = `https://api.bunny.net/pullzone/${BUNNYCDN_PULL_ZONE_ID}/purgeCache`;
+    const options = {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        AccessKey: BUNNYCDN_API_KEY,
+      },
+    };
+
+    const response: FetchResponse = await fetch(url, options);
+
+    if (!response.ok) {
+      console.error(`❌ ${new Date().toISOString()} - Failed to purge cache:`, response.statusText);
+    } else {
+      console.info(`✅ ${new Date().toISOString()} - Cache purged successfully`);
+    }
   } catch (error) {
     console.error(`❌ ${new Date().toISOString()} - Failed to purge cache`, error);
   }
