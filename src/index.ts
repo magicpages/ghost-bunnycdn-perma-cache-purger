@@ -1,16 +1,18 @@
 import express from 'express';
 import fetch, { Headers, Response as FetchResponse } from 'node-fetch';
+import FormData from 'form-data'; 
 import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
 import http from 'http';
 import https from 'https';
 import path from 'path';
 import { deleteStorageZoneFile, getPullZoneName, listStorageZoneFiles } from './util.js';
+import multer from 'multer';
 
 dotenv.config();
 
 const app = express();
-app.use(bodyParser.json());
+const upload = multer();
 
 const PORT = process.env.PORT || 3000;
 const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '');
@@ -154,8 +156,8 @@ const purgeCache = async (): Promise<void> => {
 app.use((req, res, next) => {
   const reqPath = req.path;
 
-  // Paths that should not have a trailing slash appended
-  const excludedPaths = ['/r/', '/api/'];
+  // Define paths that should not have a trailing slash appended.
+  const excludedPaths = ['/r/', '/ghost/api/'];
 
   // Check if the path ends with a slash or has a file extension or is an excluded path
   if (
@@ -166,9 +168,23 @@ app.use((req, res, next) => {
     return next();
   }
 
-  // If the path is not in the excluded list and does not end with a slash, append one
-  const query = req.url.slice(reqPath.length);
-  res.redirect(301, `${reqPath}/${query}`);
+  // If the path does not end with a slash, append one but exclude specific paths
+  if (!reqPath.endsWith('/') && !excludedPaths.some(ep => reqPath.startsWith(ep))) {
+    const query = req.url.slice(reqPath.length);
+    res.redirect(301, `${reqPath}/${query}`);
+  } else {
+    next();
+  }
+});
+
+
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    upload.any()(req, res, next);
+  } else {
+    bodyParser.json()(req, res, next);
+  }
 });
 
 app.use(async (req, res) => {
@@ -178,8 +194,29 @@ app.use(async (req, res) => {
     host: new URL(GHOST_URL).host,
   });
 
-  if (req.headers.cookie) {
-    headers.set('Cookie', req.headers.cookie);
+  // Remove content-encoding header to avoid decompression issues
+  headers.delete('accept-encoding');
+
+  let body;
+  if (req.is('multipart/form-data') && req.files) {
+    const formData = new FormData();
+    const files = req.files as Express.Multer.File[];
+
+    files.forEach((file) => {
+      formData.append(file.fieldname, file.buffer, file.originalname);
+    });
+
+    Object.keys(req.body).forEach((key) => {
+      formData.append(key, req.body[key]);
+    });
+
+    body = formData;
+    formData.getHeaders() &&
+      Object.entries(formData.getHeaders()).forEach(([key, value]) =>
+        headers.append(key, value)
+      );
+  } else {
+    body = req.method !== 'GET' ? JSON.stringify(req.body) : undefined;
   }
 
   console.info(
@@ -192,9 +229,19 @@ app.use(async (req, res) => {
     const response = await fetch(currentUrl, {
       method: req.method,
       headers: Object.fromEntries(headers),
-      body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined,
+      body: body,
       redirect: 'manual',
       agent: currentUrl.startsWith('https') ? httpsAgent : httpAgent,
+    });
+
+    response.headers.forEach((value, key) => {
+      if (
+        key !== 'content-encoding' &&
+        key !== 'transfer-encoding' &&
+        key !== 'content-length'
+      ) {
+        res.setHeader(key, value);
+      }
     });
 
     if (
@@ -212,20 +259,6 @@ app.use(async (req, res) => {
     }
 
     res.status(response.status);
-    response.headers.forEach((value, key) => {
-      if (
-        !['content-encoding', 'transfer-encoding', 'content-length'].includes(
-          key
-        )
-      ) {
-        res.setHeader(key, value);
-      }
-    });
-
-    if (response.headers.has('x-cache-invalidate')) {
-      purgeCache();
-    }
-
     if (response.body) {
       response.body.pipe(res);
     } else {
