@@ -13,7 +13,6 @@ const app = express();
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
-// remove trailing slash from GHOST_URL for consistency
 const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '');
 const BUNNYCDN_API_KEY = process.env.BUNNYCDN_API_KEY;
 const BUNNYCDN_PULL_ZONE_ID = process.env.BUNNYCDN_PULL_ZONE_ID;
@@ -155,18 +154,21 @@ const purgeCache = async (): Promise<void> => {
 app.use((req, res, next) => {
   const reqPath = req.path;
 
-  // Check if the path does not end with a slash, does not have a file extension, and does not include API endpoints
+  // Paths that should not have a trailing slash appended
+  const excludedPaths = ['/r/', '/api/'];
+
+  // Check if the path ends with a slash or has a file extension or is an excluded path
   if (
-    reqPath !== '/' &&
-    !reqPath.endsWith('/') &&
-    !path.extname(reqPath) &&
-    !reqPath.includes('/api/')
+    reqPath.endsWith('/') ||
+    path.extname(reqPath) ||
+    excludedPaths.some((excludedPath) => reqPath.startsWith(excludedPath))
   ) {
-    const query = req.url.slice(reqPath.length);
-    res.redirect(301, `${reqPath}/${query}`);
-    return;
+    return next();
   }
-  next();
+
+  // If the path is not in the excluded list and does not end with a slash, append one
+  const query = req.url.slice(reqPath.length);
+  res.redirect(301, `${reqPath}/${query}`);
 });
 
 app.use(async (req, res) => {
