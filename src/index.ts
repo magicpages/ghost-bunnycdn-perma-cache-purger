@@ -12,7 +12,14 @@ import multer from 'multer';
 dotenv.config();
 
 const app = express();
-const upload = multer();
+
+// Set up multer for handling multipart/form-data requests
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Set up body-parser for handling JSON requests
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
 
 const PORT = process.env.PORT || 3000;
 const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '');
@@ -181,9 +188,16 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || '';
   if (contentType.includes('multipart/form-data')) {
-    upload.any()(req, res, next);
+    upload.any()(req, res, (err) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ error: 'Failed to parse multipart/form-data.' });
+      }
+      next();
+    });
   } else {
-    bodyParser.json()(req, res, next);
+    next();
   }
 });
 
@@ -194,8 +208,9 @@ app.use(async (req, res) => {
     host: new URL(GHOST_URL).host,
   });
 
-  // Remove content-encoding header to avoid decompression issues
-  headers.delete('accept-encoding');
+  if (req.headers.cookie) {
+    headers.set('Cookie', req.headers.cookie);
+  }
 
   let body;
   if (req.is('multipart/form-data') && req.files) {
@@ -211,37 +226,24 @@ app.use(async (req, res) => {
     });
 
     body = formData;
-    formData.getHeaders() &&
-      Object.entries(formData.getHeaders()).forEach(([key, value]) =>
-        headers.append(key, value)
-      );
+    const formHeaders = formData.getHeaders();
+    Object.entries(formHeaders).forEach(([key, value]) => {
+      headers.set(key, value);
+    });
   } else {
     body = req.method !== 'GET' ? JSON.stringify(req.body) : undefined;
+    if (body) headers.set('Content-Type', 'application/json');
   }
 
-  console.info(
-    `${new Date().toISOString()} - Proxying request to ${currentUrl} with method ${
-      req.method
-    }`
-  );
+  console.info(`Proxying request to ${currentUrl} with method ${req.method}`);
 
   try {
     const response = await fetch(currentUrl, {
       method: req.method,
       headers: Object.fromEntries(headers),
-      body: body,
+      body,
       redirect: 'manual',
       agent: currentUrl.startsWith('https') ? httpsAgent : httpAgent,
-    });
-
-    response.headers.forEach((value, key) => {
-      if (
-        key !== 'content-encoding' &&
-        key !== 'transfer-encoding' &&
-        key !== 'content-length'
-      ) {
-        res.setHeader(key, value);
-      }
     });
 
     if (
@@ -259,16 +261,27 @@ app.use(async (req, res) => {
     }
 
     res.status(response.status);
+    response.headers.forEach((value, key) => {
+      if (
+        !['content-encoding', 'transfer-encoding', 'content-length'].includes(
+          key
+        )
+      ) {
+        res.setHeader(key, value);
+      }
+    });
+
+    if (response.headers.has('x-cache-invalidate')) {
+      purgeCache();
+    }
+
     if (response.body) {
       response.body.pipe(res);
     } else {
       res.end();
     }
   } catch (error) {
-    console.error(
-      `${new Date().toISOString()} - Error proxying request to ${currentUrl}:`,
-      error
-    );
+    console.error(`Error proxying request to ${currentUrl}: ${error}`);
     res.status(500).send({
       statusCode: 500,
       error: 'Internal Server Error',
