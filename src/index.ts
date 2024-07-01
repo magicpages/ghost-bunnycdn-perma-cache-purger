@@ -1,16 +1,25 @@
 import express from 'express';
 import fetch, { Headers, Response as FetchResponse } from 'node-fetch';
+import FormData from 'form-data'; 
 import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
 import http from 'http';
 import https from 'https';
 import path from 'path';
 import { deleteStorageZoneFile, getPullZoneName, listStorageZoneFiles } from './util.js';
+import multer from 'multer';
 
 dotenv.config();
 
 const app = express();
+
+// Set up multer for handling multipart/form-data requests
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Set up body-parser for handling JSON requests
 app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
 
 const PORT = process.env.PORT || 3000;
 const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '');
@@ -154,8 +163,8 @@ const purgeCache = async (): Promise<void> => {
 app.use((req, res, next) => {
   const reqPath = req.path;
 
-  // Paths that should not have a trailing slash appended
-  const excludedPaths = ['/r/', '/api/'];
+  // Define paths that should not have a trailing slash appended.
+  const excludedPaths = ['/r/', '/ghost/api/'];
 
   // Check if the path ends with a slash or has a file extension or is an excluded path
   if (
@@ -166,9 +175,30 @@ app.use((req, res, next) => {
     return next();
   }
 
-  // If the path is not in the excluded list and does not end with a slash, append one
-  const query = req.url.slice(reqPath.length);
-  res.redirect(301, `${reqPath}/${query}`);
+  // If the path does not end with a slash, append one but exclude specific paths
+  if (!reqPath.endsWith('/') && !excludedPaths.some(ep => reqPath.startsWith(ep))) {
+    const query = req.url.slice(reqPath.length);
+    res.redirect(301, `${reqPath}/${query}`);
+  } else {
+    next();
+  }
+});
+
+
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    upload.any()(req, res, (err) => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ error: 'Failed to parse multipart/form-data.' });
+      }
+      next();
+    });
+  } else {
+    next();
+  }
 });
 
 app.use(async (req, res) => {
@@ -182,17 +212,36 @@ app.use(async (req, res) => {
     headers.set('Cookie', req.headers.cookie);
   }
 
-  console.info(
-    `${new Date().toISOString()} - Proxying request to ${currentUrl} with method ${
-      req.method
-    }`
-  );
+  let body;
+  if (req.is('multipart/form-data') && req.files) {
+    const formData = new FormData();
+    const files = req.files as Express.Multer.File[];
+
+    files.forEach((file) => {
+      formData.append(file.fieldname, file.buffer, file.originalname);
+    });
+
+    Object.keys(req.body).forEach((key) => {
+      formData.append(key, req.body[key]);
+    });
+
+    body = formData;
+    const formHeaders = formData.getHeaders();
+    Object.entries(formHeaders).forEach(([key, value]) => {
+      headers.set(key, value);
+    });
+  } else {
+    body = req.method !== 'GET' ? JSON.stringify(req.body) : undefined;
+    if (body) headers.set('Content-Type', 'application/json');
+  }
+
+  console.info(`Proxying request to ${currentUrl} with method ${req.method}`);
 
   try {
     const response = await fetch(currentUrl, {
       method: req.method,
       headers: Object.fromEntries(headers),
-      body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined,
+      body,
       redirect: 'manual',
       agent: currentUrl.startsWith('https') ? httpsAgent : httpAgent,
     });
@@ -232,10 +281,7 @@ app.use(async (req, res) => {
       res.end();
     }
   } catch (error) {
-    console.error(
-      `${new Date().toISOString()} - Error proxying request to ${currentUrl}:`,
-      error
-    );
+    console.error(`Error proxying request to ${currentUrl}: ${error}`);
     res.status(500).send({
       statusCode: 500,
       error: 'Internal Server Error',
