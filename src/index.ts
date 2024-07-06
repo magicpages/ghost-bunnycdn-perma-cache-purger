@@ -167,13 +167,11 @@ const setResponseHeaders = (
     if (key.toLowerCase() === 'set-cookie') {
       const cookies = value.split(',');
       cookies.forEach((cookie) => {
-        console.log(`Setting cookie: ${cookie}`);
         expressResponse.append('Set-Cookie', cookie.trim());
       });
     } else if (
       !['content-encoding', 'transfer-encoding', 'content-length'].includes(key)
     ) {
-      console.log(`Setting header ${key}: ${value}`);
       expressResponse.setHeader(key, value);
     }
   });
