@@ -156,6 +156,27 @@ const purgeCache = async (): Promise<void> => {
   }
 };
 
+const setResponseHeaders = (
+  fetchResponse: Headers,
+  expressResponse: express.Response
+): void => {
+  fetchResponse.forEach((value, key) => {
+
+    // We are splitting the cookie header into individual cookies,
+    // so that they are set correctly in the response.
+    if (key.toLowerCase() === 'set-cookie') {
+      const cookies = value.split(',');
+      cookies.forEach((cookie) => {
+        expressResponse.append('Set-Cookie', cookie.trim());
+      });
+    } else if (
+      !['content-encoding', 'transfer-encoding', 'content-length'].includes(key)
+    ) {
+      expressResponse.setHeader(key, value);
+    }
+  });
+}
+
 // Ghost has a middleware implemented that redirects URLs without trailing slashes
 // to URLs with trailing slashes. This middleware replicates that behavior. Otherwise
 // the URL in the browser will be redirected to Bunny's origin URL.
@@ -216,15 +237,12 @@ app.use(async (req, res) => {
   if (req.is('multipart/form-data') && req.files) {
     const formData = new FormData();
     const files = req.files as Express.Multer.File[];
-
     files.forEach((file) => {
       formData.append(file.fieldname, file.buffer, file.originalname);
     });
-
     Object.keys(req.body).forEach((key) => {
       formData.append(key, req.body[key]);
     });
-
     body = formData;
     const formHeaders = formData.getHeaders();
     Object.entries(formHeaders).forEach(([key, value]) => {
@@ -256,20 +274,13 @@ app.use(async (req, res) => {
         GHOST_URL,
         `http://${req.headers.host}`
       );
+      setResponseHeaders(response.headers, res);
       res.redirect(response.status, redirectUrl);
       return;
     }
 
     res.status(response.status);
-    response.headers.forEach((value, key) => {
-      if (
-        !['content-encoding', 'transfer-encoding', 'content-length'].includes(
-          key
-        )
-      ) {
-        res.setHeader(key, value);
-      }
-    });
+    setResponseHeaders(response.headers, res);
 
     if (response.headers.has('x-cache-invalidate')) {
       purgeCache();
