@@ -11,11 +11,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '');
 const proxy = httpProxy.createProxyServer({
-  target: GHOST_URL,
-  secure: false, // Disable SSL certificate verification
-  agent: new https.Agent({
-    rejectUnauthorized: false, // Add this line to ignore self-signed certificates
-  }),
+  target: GHOST_URL, // make sure this is 'http://ghost:2368' if Ghost runs on HTTP internally
+  secure: false, // you can keep this as false since SSL isn't enforced between these services internally
+  changeOrigin: true,
 });
 
 // Middleware to handle lowercase URL redirection
