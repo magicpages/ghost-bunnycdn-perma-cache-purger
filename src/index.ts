@@ -1,65 +1,99 @@
 import express, { Response } from 'express';
 import httpProxy from 'http-proxy';
-import bodyParser from 'body-parser';
-import multer from 'multer';
 import dotenv from 'dotenv';
-import https from 'https';
+import fetch, { Headers as FetchHeaders, RequestInit } from 'node-fetch';
+import { deleteStorageZoneFile, getPullZoneName, listStorageZoneFiles, FileDetail } from './util.js';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '');
+const PORT = Number(process.env.PORT) || 3000;
+const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '') ?? 'http://localhost:2368';
+const BUNNYCDN_API_KEY = process.env.BUNNYCDN_API_KEY ?? '';
+const BUNNYCDN_PULL_ZONE_ID = process.env.BUNNYCDN_PULL_ZONE_ID ?? '';
+const BUNNYCDN_PURGE_OLD_CACHE = process.env.BUNNYCDN_PURGE_OLD_CACHE === 'true';
+const BUNNYCDN_STORAGE_ZONE_NAME = process.env.BUNNYCDN_STORAGE_ZONE_NAME ?? '';
+const BUNNYCDN_STORAGE_ZONE_PASSWORD = process.env.BUNNYCDN_STORAGE_ZONE_PASSWORD ?? '';
+
 const proxy = httpProxy.createProxyServer({
-  target: GHOST_URL, // make sure this is 'http://ghost:2368' if Ghost runs on HTTP internally
-  secure: false, // you can keep this as false since SSL isn't enforced between these services internally
+  target: GHOST_URL,
+  secure: false,
   changeOrigin: true,
+  selfHandleResponse: true,
 });
 
-// Middleware to handle lowercase URL redirection
-app.use((req, res, next) => {
-  const path = req.path.split('?')[0];
-  if (path !== path.toLowerCase() && !path.match(/\.\w+$/)) {
-    const query = req.originalUrl.slice(path.length);
-    return res.redirect(301, path.toLowerCase() + query);
-  }
-  next();
+proxy.on('proxyRes', async (proxyRes, req, res) => {
+  let body = Buffer.alloc(0);
+  
+  proxyRes.on('data', (data) => {
+    body = Buffer.concat([body, data]);
+  });
+
+  proxyRes.on('end', () => {
+    res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+    res.end(body);
+
+    if (proxyRes.headers['x-cache-invalidate']) {
+      console.log('Detected x-cache-invalidate header, purging cache...');
+      purgeCache();
+    }
+  });
 });
 
-// Set up multer for handling multipart/form-data requests
-const upload = multer({ storage: multer.memoryStorage() });
-
-// Apply raw body parser only to the Stripe webhook endpoint
-app.use(
-  '/members/webhooks/stripe',
-  bodyParser.raw({ type: 'application/json' })
-);
-
-app.post('/members/webhooks/stripe', (req, res) => {
-  // Forward these requests directly to Ghost
-  proxy.web(req, res, { target: GHOST_URL });
-});
-
-// General proxy for all other requests
-app.use((req, res, next) => {
-  if (!req.url.startsWith('/members/webhooks/stripe')) {
-    proxy.web(req, res, {
-      target: GHOST_URL,
-      changeOrigin: true, // This changes the origin of the host header to the target URL
-    });
-  } else {
-    next();
-  }
-});
-
-// Error handling for the proxy
 proxy.on('error', (err, req, res) => {
   console.error('Proxy error:', err);
-  // Cast res to the Express Response type
   (res as Response).status(500).send('Proxy error');
 });
 
-// Start the server
+app.use((req, res) => {
+  proxy.web(req, res, { target: GHOST_URL });
+});
+
+async function purgeCache(): Promise<void> {
+  if (BUNNYCDN_PURGE_OLD_CACHE) {
+    try {
+      const purgeResult = await deleteOldCacheDirectories();
+      console.log('Cache directories purged:', purgeResult);
+    } catch (error) {
+      console.error('Error during cache purge:', error);
+    }
+  }
+
+  const url = `https://api.bunny.net/pullzone/${BUNNYCDN_PULL_ZONE_ID}/purgeCache`;
+  const options: RequestInit = {
+    method: 'POST',
+    headers: new FetchHeaders({
+      'content-type': 'application/json',
+      'AccessKey': BUNNYCDN_API_KEY,
+    }),
+  };
+
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      throw new Error(`Failed to purge cache: ${response.statusText}`);
+    }
+    console.log('Cache purged successfully');
+  } catch (error) {
+    console.error('Failed to purge cache:', error);
+  }
+}
+
+async function deleteOldCacheDirectories(): Promise<string> {
+  const pullZoneName = await getPullZoneName(BUNNYCDN_PULL_ZONE_ID, BUNNYCDN_API_KEY);
+  const files = await listStorageZoneFiles(BUNNYCDN_STORAGE_ZONE_NAME, '__bcdn_perma_cache__', BUNNYCDN_STORAGE_ZONE_PASSWORD) as FileDetail[];
+  
+  const deletePromises = files.map(file => {
+    if (file.ObjectName.includes(pullZoneName)) {
+      return deleteStorageZoneFile(BUNNYCDN_STORAGE_ZONE_NAME, '__bcdn_perma_cache__', file.ObjectName, BUNNYCDN_STORAGE_ZONE_PASSWORD);
+    }
+    return Promise.resolve();
+  });
+
+  const results = await Promise.allSettled(deletePromises);
+  return `Deleted ${results.filter(r => r.status === 'fulfilled').length} out of ${files.length} directories.`;
+}
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

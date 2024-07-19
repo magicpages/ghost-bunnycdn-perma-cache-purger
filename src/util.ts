@@ -53,3 +53,21 @@ export const deleteStorageZoneFile = async (storageZoneName: string, path: strin
   const response = await fetch(url, options);
   return await response.json();
 };
+
+export interface FileDetail {
+    Guid: string,
+    StorageZoneName: string,
+    Path: string,
+    ObjectName: string,
+    Length: number,
+    LastChanged: string,
+    ServerId: number,
+    ArrayNumber: number,
+    IsDirectory: boolean,
+    UserId: string,
+    ContentType: string,
+    DateCreated: string,
+    StorageZoneId: number,
+    Checksum: string | null,
+    ReplicatedZones: string[] | null,
+  }
