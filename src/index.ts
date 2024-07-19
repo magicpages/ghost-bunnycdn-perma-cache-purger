@@ -11,7 +11,35 @@ import multer from 'multer';
 
 dotenv.config();
 
+/**
+ * We are using this middleware to replicate the behavior of Ghost's middleware.
+ * Not doing so would result in the URL in the browser being redirected to Bunny's origin URL.
+ * E.g. example.com/About would be redirected to example.b-cdn.net/about
+ * 
+ * @See https://github.com/TryGhost/Ghost/blob/v5.88.0/ghost/core/core/server/web/shared/middleware/uncapitalise.js
+ */
+const uncapitalizeMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const requestPath = req.originalUrl; // Includes query strings if any
+  const basePath = req.baseUrl + req.path; // Combines base path and specific path without query strings
+
+  try {
+    const decodedPath = decodeURIComponent(basePath);
+
+    // Check for uppercase characters in the path
+    if (/[A-Z]/.test(decodedPath)) {
+      const lowerCasePath = requestPath.toLowerCase();
+      return res.redirect(301, lowerCasePath);
+    }
+
+    next();
+  } catch (error) {
+    console.error('Error decoding the URL:', error);
+    res.status(400).send('Bad Request due to improper URL encoding.');
+  }
+};
+
 const app = express();
+app.use(uncapitalizeMiddleware);
 
 // Set up multer for handling multipart/form-data requests
 const upload = multer({ storage: multer.memoryStorage() });
