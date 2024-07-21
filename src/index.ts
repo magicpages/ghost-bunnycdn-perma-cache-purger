@@ -2,7 +2,7 @@ import express, { Response } from 'express';
 import httpProxy from 'http-proxy';
 import dotenv from 'dotenv';
 import fetch, { Headers as FetchHeaders, RequestInit } from 'node-fetch';
-import { deleteStorageZoneFile, getPullZoneName, listStorageZoneFiles, FileDetail } from './util.js';
+import { deleteStorageZoneFile, getPullZoneName, listStorageZoneFiles, FileDetail, errorHtml } from './util.js';
 
 dotenv.config();
 
@@ -40,9 +40,10 @@ proxy.on('proxyRes', async (proxyRes, req, res) => {
   });
 });
 
+// This error handler replicates the error page from Ghost
 proxy.on('error', (err, req, res) => {
-  console.error('Proxy error:', err);
-  (res as Response).status(500).send('Proxy error');
+  console.error("Error during proxy operation:", err);
+  (res as Response).status(503).send(errorHtml);
 });
 
 app.use((req, res) => {
