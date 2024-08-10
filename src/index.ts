@@ -15,6 +15,8 @@ const BUNNYCDN_PURGE_OLD_CACHE = process.env.BUNNYCDN_PURGE_OLD_CACHE === 'true'
 const BUNNYCDN_STORAGE_ZONE_NAME = process.env.BUNNYCDN_STORAGE_ZONE_NAME ?? '';
 const BUNNYCDN_STORAGE_ZONE_PASSWORD = process.env.BUNNYCDN_STORAGE_ZONE_PASSWORD ?? '';
 
+app.set('trust proxy', true); 
+
 const proxy = httpProxy.createProxyServer({
   target: GHOST_URL,
   secure: false,
