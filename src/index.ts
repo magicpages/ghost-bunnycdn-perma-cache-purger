@@ -8,12 +8,15 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+const DEBUG = process.env.DEBUG === 'true';
 const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '') ?? 'http://localhost:2368';
 const BUNNYCDN_API_KEY = process.env.BUNNYCDN_API_KEY ?? '';
 const BUNNYCDN_PULL_ZONE_ID = process.env.BUNNYCDN_PULL_ZONE_ID ?? '';
 const BUNNYCDN_PURGE_OLD_CACHE = process.env.BUNNYCDN_PURGE_OLD_CACHE === 'true';
 const BUNNYCDN_STORAGE_ZONE_NAME = process.env.BUNNYCDN_STORAGE_ZONE_NAME ?? '';
 const BUNNYCDN_STORAGE_ZONE_PASSWORD = process.env.BUNNYCDN_STORAGE_ZONE_PASSWORD ?? '';
+
+app.set('trust proxy', true); 
 
 const proxy = httpProxy.createProxyServer({
   target: GHOST_URL,
@@ -22,7 +25,24 @@ const proxy = httpProxy.createProxyServer({
   selfHandleResponse: true,
 });
 
+proxy.on('proxyReq', function (proxyReq, req, res, options) {
+  if (DEBUG) {
+    console.log('Proxying request:', req.method, req.url);
+    console.log('Headers:', req.headers);
+  }
+
+  const originalIp =
+    req.headers['x-original-forwarded-for'] || req.connection.remoteAddress;
+  proxyReq.setHeader('x-forwarded-for', originalIp as string);
+  proxyReq.setHeader('x-real-ip', originalIp as string);
+});
+
 proxy.on('proxyRes', async (proxyRes, req, res) => {
+  if (DEBUG) {
+    console.log('Proxying response:', proxyRes.statusCode, req.method, req.url);
+    console.log('Headers:', proxyRes.headers);
+  }
+
   let body = Buffer.alloc(0);
   
   proxyRes.on('data', (data) => {
@@ -97,4 +117,8 @@ async function deleteOldCacheDirectories(): Promise<string> {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+
+  if (DEBUG) {
+    console.log('Debug mode enabled');
+  }
 });
