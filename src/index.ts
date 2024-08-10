@@ -31,8 +31,10 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
     console.log('Headers:', req.headers);
   }
 
-  const originalIp = req.headers['x-real-ip'] || req.connection.remoteAddress;
+  const originalIp =
+    req.headers['x-original-forwarded-for'] || req.connection.remoteAddress;
   proxyReq.setHeader('x-forwarded-for', originalIp as string);
+  proxyReq.setHeader('x-real-ip', originalIp as string);
 });
 
 proxy.on('proxyRes', async (proxyRes, req, res) => {
