@@ -6,6 +6,8 @@ This project acts as a proxy between a Ghost CMS instance and BunnyCDN. It effic
 
 In this project specifically, it is used to purge the cache of a specified BunnyCDN pull zone. This functionality ensures that the cache remains synchronized with the latest content updates from Ghost CMS.
 
+Additionally, the tool sets the client's IP address as the `X-Forwarded-For` header in the request to Ghost. This is necessary since Bunny.net tries to set their edge servers' IP addresses as the client's IP address, which can cause issues with Ghost's rate limiting.
+
 Originally developed as part of the BunnyCDN Perma-Cache integration at [Magic Pages](https://magicpages.co), a managed Ghost CMS hosting service, this tool can also help self-hosters using BunnyCDN to keep their cache up-to-date with their Ghost CMS instance.
 
 While designed for use within a Docker Compose environment, other usage configurations are technically possible but not tested.
@@ -27,6 +29,7 @@ The `magicpages/bunnycdn-perma-cache-purger` Docker image is available on [Docke
 
 #### Optional variables
 - `PORT`: The port on which the proxy listens for incoming requests. Defaults to `3000`.
+- `DEBUG`: Set to `true` to enable debug logging. Defaults to `false`.
 - `BUNNYCDN_PURGE_OLD_CACHE`: Set to `true`to enable deleting old cache files from the storage zone.
 - `BUNNYCDN_STORAGE_ZONE_NAME`: Required if `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`. The name of the BunnyCDN storage zone connected to the pull zone.
 - `BUNNYCDN_STORAGE_ZONE_PASSWORD`: Required if `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`. The password of the BunnyCDN storage zone connected to the pull zone. This differs from the API key. See [Bunny's Edge Storage API documentation](https://docs.bunny.net/reference/storage-api) for more information.
