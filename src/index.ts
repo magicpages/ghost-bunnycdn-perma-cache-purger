@@ -75,6 +75,13 @@ proxy.on('error', (err, req, res) => {
 });
 
 if (BLOCK_KNOWN_SPAM_REQUESTS) {
+
+  const normalizeUrl = (url: string) => {
+    // Remove double slashes, but not the ones after `http://` or `https://`
+    // Some spam requests have double slashes in the URL (either intentionally or by mistake)
+    return url.replace(/([^:]\/)\/+/g, '$1');
+  };
+
   const knownSpamRequests: SpamRequestCondition[] = [
     /**
      * Spam requests from 2024-08-18
@@ -91,7 +98,7 @@ if (BLOCK_KNOWN_SPAM_REQUESTS) {
 
   app.use((req: Request, res: Response, next: NextFunction) => {
     // check method and if the url is in the known spam requests
-    if (req.method === 'POST' && knownSpamRequests.some((r) => req.url.startsWith(r.url))) {
+    if (req.method === 'POST' && knownSpamRequests.some((r) => normalizeUrl(req.url).startsWith(r.url))) {
       let body = '';
 
       req.on('data', (chunk) => {
