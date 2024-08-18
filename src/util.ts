@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import { Request } from 'express';
 
 // This is a partial interface for the PullZone object,
 // given that we only need the Name property.
@@ -75,3 +76,8 @@ export interface FileDetail {
     Checksum: string | null,
     ReplicatedZones: string[] | null,
   }
+
+export interface SpamRequestCondition {
+  url: string;
+  condition: (req: Request) => boolean;
+}

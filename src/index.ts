@@ -8,8 +8,8 @@ import {
   listStorageZoneFiles,
   FileDetail,
   errorHtml,
+  SpamRequestCondition,
 } from './util.js';
-import bodyParser from 'body-parser';
 
 dotenv.config();
 
@@ -25,7 +25,6 @@ const BUNNYCDN_STORAGE_ZONE_PASSWORD = process.env.BUNNYCDN_STORAGE_ZONE_PASSWOR
 const BLOCK_KNOWN_SPAM_REQUESTS = process.env.BLOCK_KNOWN_SPAM_REQUESTS !== 'false';
 
 app.set('trust proxy', true);
-app.use(bodyParser.json());
 
 const proxy = httpProxy.createProxyServer({
   target: GHOST_URL,
@@ -76,24 +75,62 @@ proxy.on('error', (err, req, res) => {
 });
 
 if (BLOCK_KNOWN_SPAM_REQUESTS) {
-  app.use((req: Request, res: Response, next: NextFunction) => {
 
+  const knownSpamRequests: SpamRequestCondition[] = [
     /**
      * Spam requests from 2024-08-18
      * @See: https://www.reddit.com/r/Ghost/comments/1eths4f/someone_registers_multiple_users_on_my_selfhosted/
      */
-    if (
-      req.url.startsWith('/members/api/send-magic-link') &&
-      req.body &&
-      req.body.name === 'adwdasddwa'
-    ) {
-      console.log('Blocked spam signup attempt');
-      return res.status(403).send('Forbidden');
-    }
+    {
+      url: '//members/api/send-magic-link',
+      condition: (req: Request) => {
+        return req.body && req.body.name === 'adwdasddwa';
+      },
+    },
+    {
+      url: '/members/api/send-magic-link',
+      condition: (req: Request) => {
+        return req.body && req.body.name === 'adwdasddwa';
+      },
+    },
+    // Additional spam conditions should be added here as necessary. PRs very welcome!
+  ];
 
-    next();
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    // check method and if the url is in the known spam requests
+    if (req.method === 'POST' && knownSpamRequests.some((r) => req.url.startsWith(r.url))) {
+      let body = '';
+
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
+
+      req.on('end', () => {
+        try {
+          req.body = JSON.parse(body);
+
+          for (const spamRequest of knownSpamRequests) {
+            if (
+              req.url.startsWith(spamRequest.url) &&
+              spamRequest.condition(req)
+            ) {
+              console.log('Blocked known spam request:', req.url, req.body);
+              return res.status(403).send('Forbidden');
+            }
+          }
+
+          next();
+        } catch (error) {
+          console.error('Error parsing request body:', error);
+          next();
+        }
+      });
+    } else {
+      next();
+    }
   });
 }
+
 
 app.use((req, res) => {
   proxy.web(req, res, { target: GHOST_URL });
