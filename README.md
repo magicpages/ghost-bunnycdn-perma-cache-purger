@@ -33,6 +33,7 @@ The `magicpages/bunnycdn-perma-cache-purger` Docker image is available on [Docke
 - `BUNNYCDN_PURGE_OLD_CACHE`: Set to `true`to enable deleting old cache files from the storage zone.
 - `BUNNYCDN_STORAGE_ZONE_NAME`: Required if `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`. The name of the BunnyCDN storage zone connected to the pull zone.
 - `BUNNYCDN_STORAGE_ZONE_PASSWORD`: Required if `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`. The password of the BunnyCDN storage zone connected to the pull zone. This differs from the API key. See [Bunny's Edge Storage API documentation](https://docs.bunny.net/reference/storage-api) for more information.
+- BLOCK_KNOWN_SPAM_REQUESTS: Set to true (default) to block known spam requests. Set to false to disable this feature.
 
 These variables must be set in the Docker Compose file or as part of your Docker container configuration.
 
@@ -106,6 +107,17 @@ If the header is present, the proxy sends a purge request to the BunnyCDN API to
 The proxy is built using Node.js and a simple Express server. Nothing fancy, just a few lines of code to handle the requests and responses.
 
 And yes, that is the exact code that's running in production at Magic Pages 😉
+
+### Blocking known spam requests
+
+The BLOCK_KNOWN_SPAM_REQUESTS environment variable allows you to block spam requests targeting Ghost CMS. By default, this feature is enabled. The middleware will inspect incoming requests and block any that match known spam patterns.
+
+#### Known Spam Requests
+| Spam Pattern                 | Request Property | Value      | Description                                           |   |
+|------------------------------|------------------|------------|-------------------------------------------------------|---|
+| /members/api/send-magic-link | name             | adwdasddwa | Blocks spam signup attempts using this specific name. |   |
+
+This feature is particularly useful if you're experiencing targeted spam attacks that repeatedly use the same name or other identifying features in the requests. You can extend this table and the corresponding middleware logic as needed to block additional patterns. PRs for other known spam requests are very welcome.
 
 ## License
 This project is licensed under the MIT License, so feel free to do whatever you want with it. If you find it useful, I'd love to hear about it!
