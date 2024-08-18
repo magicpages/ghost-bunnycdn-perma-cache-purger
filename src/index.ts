@@ -1,8 +1,15 @@
-import express, { Response } from 'express';
+import express, { Response, Request, NextFunction } from 'express';
 import httpProxy from 'http-proxy';
 import dotenv from 'dotenv';
 import fetch, { Headers as FetchHeaders, RequestInit } from 'node-fetch';
-import { deleteStorageZoneFile, getPullZoneName, listStorageZoneFiles, FileDetail, errorHtml } from './util.js';
+import {
+  deleteStorageZoneFile,
+  getPullZoneName,
+  listStorageZoneFiles,
+  FileDetail,
+  errorHtml,
+} from './util.js';
+import bodyParser from 'body-parser';
 
 dotenv.config();
 
@@ -15,8 +22,10 @@ const BUNNYCDN_PULL_ZONE_ID = process.env.BUNNYCDN_PULL_ZONE_ID ?? '';
 const BUNNYCDN_PURGE_OLD_CACHE = process.env.BUNNYCDN_PURGE_OLD_CACHE === 'true';
 const BUNNYCDN_STORAGE_ZONE_NAME = process.env.BUNNYCDN_STORAGE_ZONE_NAME ?? '';
 const BUNNYCDN_STORAGE_ZONE_PASSWORD = process.env.BUNNYCDN_STORAGE_ZONE_PASSWORD ?? '';
+const BLOCK_KNOWN_SPAM_REQUESTS = process.env.BLOCK_KNOWN_SPAM_REQUESTS !== 'false';
 
-app.set('trust proxy', true); 
+app.set('trust proxy', true);
+app.use(bodyParser.json());
 
 const proxy = httpProxy.createProxyServer({
   target: GHOST_URL,
@@ -44,7 +53,7 @@ proxy.on('proxyRes', async (proxyRes, req, res) => {
   }
 
   let body = Buffer.alloc(0);
-  
+
   proxyRes.on('data', (data) => {
     body = Buffer.concat([body, data]);
   });
@@ -62,9 +71,29 @@ proxy.on('proxyRes', async (proxyRes, req, res) => {
 
 // This error handler replicates the error page from Ghost
 proxy.on('error', (err, req, res) => {
-  console.error("Error during proxy operation:", err);
+  console.error('Error during proxy operation:', err);
   (res as Response).status(503).send(errorHtml);
 });
+
+if (BLOCK_KNOWN_SPAM_REQUESTS) {
+  app.use((req: Request, res: Response, next: NextFunction) => {
+
+    /**
+     * Spam requests from 2024-08-18
+     * @See: https://www.reddit.com/r/Ghost/comments/1eths4f/someone_registers_multiple_users_on_my_selfhosted/
+     */
+    if (
+      req.url.startsWith('/members/api/send-magic-link') &&
+      req.body &&
+      req.body.name === 'adwdasddwa'
+    ) {
+      console.log('Blocked spam signup attempt');
+      return res.status(403).send('Forbidden');
+    }
+
+    next();
+  });
+}
 
 app.use((req, res) => {
   proxy.web(req, res, { target: GHOST_URL });
@@ -85,7 +114,7 @@ async function purgeCache(): Promise<void> {
     method: 'POST',
     headers: new FetchHeaders({
       'content-type': 'application/json',
-      'AccessKey': BUNNYCDN_API_KEY,
+      AccessKey: BUNNYCDN_API_KEY,
     }),
   };
 
@@ -101,18 +130,32 @@ async function purgeCache(): Promise<void> {
 }
 
 async function deleteOldCacheDirectories(): Promise<string> {
-  const pullZoneName = await getPullZoneName(BUNNYCDN_PULL_ZONE_ID, BUNNYCDN_API_KEY);
-  const files = await listStorageZoneFiles(BUNNYCDN_STORAGE_ZONE_NAME, '__bcdn_perma_cache__', BUNNYCDN_STORAGE_ZONE_PASSWORD) as FileDetail[];
-  
-  const deletePromises = files.map(file => {
+  const pullZoneName = await getPullZoneName(
+    BUNNYCDN_PULL_ZONE_ID,
+    BUNNYCDN_API_KEY
+  );
+  const files = (await listStorageZoneFiles(
+    BUNNYCDN_STORAGE_ZONE_NAME,
+    '__bcdn_perma_cache__',
+    BUNNYCDN_STORAGE_ZONE_PASSWORD
+  )) as FileDetail[];
+
+  const deletePromises = files.map((file) => {
     if (file.ObjectName.includes(pullZoneName)) {
-      return deleteStorageZoneFile(BUNNYCDN_STORAGE_ZONE_NAME, '__bcdn_perma_cache__', file.ObjectName, BUNNYCDN_STORAGE_ZONE_PASSWORD);
+      return deleteStorageZoneFile(
+        BUNNYCDN_STORAGE_ZONE_NAME,
+        '__bcdn_perma_cache__',
+        file.ObjectName,
+        BUNNYCDN_STORAGE_ZONE_PASSWORD
+      );
     }
     return Promise.resolve();
   });
 
   const results = await Promise.allSettled(deletePromises);
-  return `Deleted ${results.filter(r => r.status === 'fulfilled').length} out of ${files.length} directories.`;
+  return `Deleted ${
+    results.filter((r) => r.status === 'fulfilled').length
+  } out of ${files.length} directories.`;
 }
 
 app.listen(PORT, () => {
