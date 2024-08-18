@@ -78,6 +78,10 @@ export interface FileDetail {
   }
 
 export interface SpamRequestCondition {
+  field: string;
+  value: string;
+}
+export interface SpamRequest {
   url: string;
-  condition: (req: Request) => boolean;
+  conditions: SpamRequestCondition[];
 }

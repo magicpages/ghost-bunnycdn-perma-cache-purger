@@ -8,7 +8,6 @@ import {
   listStorageZoneFiles,
   FileDetail,
   errorHtml,
-  SpamRequestCondition,
 } from './util.js';
 
 dotenv.config();
@@ -75,62 +74,39 @@ proxy.on('error', (err, req, res) => {
 });
 
 if (BLOCK_KNOWN_SPAM_REQUESTS) {
+  app.use(
+    '/members/api/send-magic-link',
+    (req: Request, res: Response, next: NextFunction) => {
+      if (req.method === 'POST') {
+        let body = '';
 
-  const knownSpamRequests: SpamRequestCondition[] = [
-    /**
-     * Spam requests from 2024-08-18
-     * @See: https://www.reddit.com/r/Ghost/comments/1eths4f/someone_registers_multiple_users_on_my_selfhosted/
-     */
-    {
-      url: '//members/api/send-magic-link',
-      condition: (req: Request) => {
-        return req.body && req.body.name === 'adwdasddwa';
-      },
-    },
-    {
-      url: '/members/api/send-magic-link',
-      condition: (req: Request) => {
-        return req.body && req.body.name === 'adwdasddwa';
-      },
-    },
-    // Additional spam conditions should be added here as necessary. PRs very welcome!
-  ];
+        req.on('data', (chunk) => {
+          body += chunk.toString();
+        });
 
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    // check method and if the url is in the known spam requests
-    if (req.method === 'POST' && knownSpamRequests.some((r) => req.url.startsWith(r.url))) {
-      let body = '';
-
-      req.on('data', (chunk) => {
-        body += chunk;
-      });
-
-      req.on('end', () => {
-        try {
-          req.body = JSON.parse(body);
-
-          for (const spamRequest of knownSpamRequests) {
-            if (
-              req.url.startsWith(spamRequest.url) &&
-              spamRequest.condition(req)
-            ) {
-              console.log('Blocked known spam request:', req.url, req.body);
+        req.on('end', () => {
+          try {
+            if (body.includes('"name":"adwdasddwa"')) {
+              console.log('Blocked spam signup attempt');
               return res.status(403).send('Forbidden');
             }
+            next(); // Only forward the request if it's not spam
+          } catch (error) {
+            console.error('Error detecting spam:', error);
+            next();
           }
+        });
 
-          next();
-        } catch (error) {
-          console.error('Error parsing request body:', error);
-          next();
-        }
-      });
-    } else {
-      next();
+        req.on('error', (err) => {
+          console.error('Error receiving data:', err);
+          res.status(400).send('Bad Request');
+        });
+      } else {
+        next();
+      }
     }
-  });
+  );
 }
-
 
 app.use((req, res) => {
   proxy.web(req, res, { target: GHOST_URL });
