@@ -8,6 +8,7 @@ import {
   listStorageZoneFiles,
   FileDetail,
   errorHtml,
+  SpamRequest,
 } from './util.js';
 
 dotenv.config();
@@ -24,6 +25,91 @@ const BUNNYCDN_STORAGE_ZONE_PASSWORD = process.env.BUNNYCDN_STORAGE_ZONE_PASSWOR
 const BLOCK_KNOWN_SPAM_REQUESTS = process.env.BLOCK_KNOWN_SPAM_REQUESTS !== 'false';
 
 app.set('trust proxy', true);
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (BLOCK_KNOWN_SPAM_REQUESTS && req.method === 'POST') {
+    let rawBody: Buffer = Buffer.alloc(0);
+
+    req.on('data', (chunk) => {
+      rawBody = Buffer.concat([rawBody, chunk]);
+    });
+
+    req.on('end', () => {
+      try {
+        req.body = JSON.parse(rawBody.toString());
+      } catch (e) {
+        console.error('Failed to parse JSON:', e);
+        req.body = {};
+      }
+
+      // This is a list of known spam requests that we want to block
+      const knownSpamRequests: SpamRequest[] = [
+        /**
+         * Spam requests from 2024-08-18
+         * @See: https://www.reddit.com/r/Ghost/comments/1eths4f/someone_registers_multiple_users_on_my_selfhosted/
+         */
+        {
+          url: '//members/api/send-magic-link',
+          conditions: [
+            {
+              field: 'body.name',
+              value: 'adwdasddwa',
+            },
+          ],
+        },
+        {
+          url: '/members/api/send-magic-link',
+          conditions: [
+            {
+              field: 'body.name',
+              value: 'adwdasddwa',
+            },
+          ],
+        },
+
+        // Additional spam conditions should be added here as necessary. PRs very welcome!
+      ];
+
+      if (DEBUG) {
+        console.log('Incoming request URL:', req.url);
+        console.log('Incoming request body:', req.body);
+      }
+
+      const isSpamRequest = knownSpamRequests.some((spamRequest) => {
+        if (!req.url.startsWith(spamRequest.url)) return false;
+
+        return spamRequest.conditions.every((condition) => {
+          const fieldParts = condition.field.split('.');
+          let fieldValue: any = req;
+
+          for (const part of fieldParts) {
+            fieldValue = fieldValue[part];
+            if (fieldValue === undefined) {
+              
+              if (DEBUG) {
+                console.log(`Field ${condition.field} not found in request.`);
+              }
+
+              return false;
+            }
+          }
+
+          return String(fieldValue) === String(condition.value);
+        });
+      });
+
+      if (isSpamRequest) {
+        console.log('Blocked known spam request:', req.url, req.body);
+        return res.status(403).send('Forbidden');
+      }
+
+      (req as any).rawBody = rawBody;
+      next();
+    });
+  } else {
+    next();
+  }
+});
 
 const proxy = httpProxy.createProxyServer({
   target: GHOST_URL,
@@ -42,6 +128,11 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
     req.headers['x-original-forwarded-for'] || req.connection.remoteAddress;
   proxyReq.setHeader('x-forwarded-for', originalIp as string);
   proxyReq.setHeader('x-real-ip', originalIp as string);
+
+  // Send the raw body to Ghost for legitimate requests
+  if ((req as any).rawBody && (req as any).rawBody.length > 0) {
+    proxyReq.write((req as any).rawBody);
+  }
 });
 
 proxy.on('proxyRes', async (proxyRes, req, res) => {
