@@ -16,15 +16,25 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const DEBUG = process.env.DEBUG === 'true';
-const GHOST_URL = process.env.GHOST_URL?.replace(/\/$/, '') ?? 'http://localhost:2368';
+const GHOST_URL =
+  process.env.GHOST_URL?.replace(/\/$/, '') ?? 'http://localhost:2368';
 const BUNNYCDN_API_KEY = process.env.BUNNYCDN_API_KEY ?? '';
 const BUNNYCDN_PULL_ZONE_ID = process.env.BUNNYCDN_PULL_ZONE_ID ?? '';
-const BUNNYCDN_PURGE_OLD_CACHE = process.env.BUNNYCDN_PURGE_OLD_CACHE === 'true';
+const BUNNYCDN_PURGE_OLD_CACHE =
+  process.env.BUNNYCDN_PURGE_OLD_CACHE === 'true';
 const BUNNYCDN_STORAGE_ZONE_NAME = process.env.BUNNYCDN_STORAGE_ZONE_NAME ?? '';
-const BUNNYCDN_STORAGE_ZONE_PASSWORD = process.env.BUNNYCDN_STORAGE_ZONE_PASSWORD ?? '';
-const BLOCK_KNOWN_SPAM_REQUESTS = process.env.BLOCK_KNOWN_SPAM_REQUESTS !== 'false';
+const BUNNYCDN_STORAGE_ZONE_PASSWORD =
+  process.env.BUNNYCDN_STORAGE_ZONE_PASSWORD ?? '';
+const BLOCK_KNOWN_SPAM_REQUESTS =
+  process.env.BLOCK_KNOWN_SPAM_REQUESTS !== 'false';
 
 app.set('trust proxy', true);
+
+// Normalize URL paths to avoid issues with double slashes
+app.use((req: Request, res: Response, next: NextFunction) => {
+  req.url = req.url.replace(/\/+/g, '/');
+  next();
+});
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (BLOCK_KNOWN_SPAM_REQUESTS && req.method === 'POST') {
@@ -42,21 +52,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         req.body = {};
       }
 
-      // This is a list of known spam requests that we want to block
+      // List of known spam requests to block
       const knownSpamRequests: SpamRequest[] = [
-        /**
-         * Spam requests from 2024-08-18
-         * @See: https://www.reddit.com/r/Ghost/comments/1eths4f/someone_registers_multiple_users_on_my_selfhosted/
-         */
-        {
-          url: '//members/api/send-magic-link',
-          conditions: [
-            {
-              field: 'body.name',
-              value: 'adwdasddwa',
-            },
-          ],
-        },
         {
           url: '/members/api/send-magic-link',
           conditions: [
@@ -66,8 +63,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
             },
           ],
         },
-
-        // Additional spam conditions should be added here as necessary. PRs very welcome!
       ];
 
       if (DEBUG) {
@@ -85,11 +80,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
           for (const part of fieldParts) {
             fieldValue = fieldValue[part];
             if (fieldValue === undefined) {
-              
               if (DEBUG) {
                 console.log(`Field ${condition.field} not found in request.`);
               }
-
               return false;
             }
           }
@@ -131,6 +124,10 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
 
   // Send the raw body to Ghost for legitimate requests
   if ((req as any).rawBody && (req as any).rawBody.length > 0) {
+    proxyReq.setHeader(
+      'Content-Length',
+      (req as any).rawBody.length.toString()
+    );
     proxyReq.write((req as any).rawBody);
   }
 });
@@ -158,46 +155,11 @@ proxy.on('proxyRes', async (proxyRes, req, res) => {
   });
 });
 
-// This error handler replicates the error page from Ghost
+// Error handler replicates the error page from Ghost
 proxy.on('error', (err, req, res) => {
   console.error('Error during proxy operation:', err);
   (res as Response).status(503).send(errorHtml);
 });
-
-if (BLOCK_KNOWN_SPAM_REQUESTS) {
-  app.use(
-    '/members/api/send-magic-link',
-    (req: Request, res: Response, next: NextFunction) => {
-      if (req.method === 'POST') {
-        let body = '';
-
-        req.on('data', (chunk) => {
-          body += chunk.toString();
-        });
-
-        req.on('end', () => {
-          try {
-            if (body.includes('"name":"adwdasddwa"')) {
-              console.log('Blocked spam signup attempt');
-              return res.status(403).send('Forbidden');
-            }
-            next(); // Only forward the request if it's not spam
-          } catch (error) {
-            console.error('Error detecting spam:', error);
-            next();
-          }
-        });
-
-        req.on('error', (err) => {
-          console.error('Error receiving data:', err);
-          res.status(400).send('Bad Request');
-        });
-      } else {
-        next();
-      }
-    }
-  );
-}
 
 app.use((req, res) => {
   proxy.web(req, res, { target: GHOST_URL });
