@@ -139,6 +139,10 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
     console.log('Headers:', proxyRes.headers);
   }
 
+  // Ensure the headers are sent as-is, without modification
+  res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+
+  // Stream the response directly from the upstream server to the client
   proxyRes.pipe(res);
 
   res.on('finish', () => {
