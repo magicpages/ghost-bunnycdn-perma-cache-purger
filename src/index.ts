@@ -36,23 +36,24 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Middleware to handle POST requests and spam detection
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (BLOCK_KNOWN_SPAM_REQUESTS && req.method === 'POST') {
-    let rawBody: Buffer = Buffer.alloc(0);
+    let rawBody: Buffer[] = [];
 
     req.on('data', (chunk) => {
-      rawBody = Buffer.concat([rawBody, chunk]);
+      rawBody.push(chunk);
     });
 
     req.on('end', () => {
+      const bodyString = Buffer.concat(rawBody).toString();
       try {
-        req.body = JSON.parse(rawBody.toString());
+        req.body = JSON.parse(bodyString);
       } catch (e) {
         console.error('Failed to parse JSON:', e);
         req.body = {};
       }
 
-      // List of known spam requests to block
       const knownSpamRequests: SpamRequest[] = [
         {
           url: '/members/api/send-magic-link',
@@ -96,7 +97,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         return res.status(403).send('Forbidden');
       }
 
-      (req as any).rawBody = rawBody;
+      (req as any).rawBody = Buffer.concat(rawBody);
       next();
     });
   } else {
@@ -108,10 +109,11 @@ const proxy = httpProxy.createProxyServer({
   target: GHOST_URL,
   secure: false,
   changeOrigin: true,
-  selfHandleResponse: true,
+  selfHandleResponse: false, // Direct streaming without buffering
 });
 
-proxy.on('proxyReq', function (proxyReq, req, res, options) {
+// Handle proxy requests
+proxy.on('proxyReq', function (proxyReq, req, res) {
   if (DEBUG) {
     console.log('Proxying request:', req.method, req.url);
     console.log('Headers:', req.headers);
@@ -122,7 +124,6 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
   proxyReq.setHeader('x-forwarded-for', originalIp as string);
   proxyReq.setHeader('x-real-ip', originalIp as string);
 
-  // Send the raw body to Ghost for legitimate requests
   if ((req as any).rawBody && (req as any).rawBody.length > 0) {
     proxyReq.setHeader(
       'Content-Length',
@@ -132,22 +133,14 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
   }
 });
 
-proxy.on('proxyRes', async (proxyRes, req, res) => {
+proxy.on('proxyRes', (proxyRes, req, res) => {
   if (DEBUG) {
     console.log('Proxying response:', proxyRes.statusCode, req.method, req.url);
     console.log('Headers:', proxyRes.headers);
   }
 
-  let body = Buffer.alloc(0);
-
-  proxyRes.on('data', (data) => {
-    body = Buffer.concat([body, data]);
-  });
-
-  proxyRes.on('end', () => {
-    res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
-    res.end(body);
-
+  proxyRes.pipe(res);
+  res.on('finish', () => {
     if (proxyRes.headers['x-cache-invalidate']) {
       console.log('Detected x-cache-invalidate header, purging cache...');
       purgeCache();
@@ -155,7 +148,6 @@ proxy.on('proxyRes', async (proxyRes, req, res) => {
   });
 });
 
-// Error handler replicates the error page from Ghost
 proxy.on('error', (err, req, res) => {
   console.error('Error during proxy operation:', err);
   (res as Response).status(503).send(errorHtml);
@@ -206,24 +198,24 @@ async function deleteOldCacheDirectories(): Promise<string> {
     BUNNYCDN_STORAGE_ZONE_PASSWORD
   )) as FileDetail[];
 
-const deletePromises = files.map(async (file) => {
-  if (file.ObjectName.includes(pullZoneName)) {
-    try {
-      const result = await deleteStorageZoneFile(
-        BUNNYCDN_STORAGE_ZONE_NAME,
-        '__bcdn_perma_cache__',
-        file.ObjectName,
-        BUNNYCDN_STORAGE_ZONE_PASSWORD
-      );
-      console.log(`Deleted ${file.ObjectName}:`, result);
-      return result;
-    } catch (error) {
-      console.error(`Error deleting ${file.ObjectName}:`, error);
-      return Promise.reject(error);
+  const deletePromises = files.map(async (file) => {
+    if (file.ObjectName.includes(pullZoneName)) {
+      try {
+        const result = await deleteStorageZoneFile(
+          BUNNYCDN_STORAGE_ZONE_NAME,
+          '__bcdn_perma_cache__',
+          file.ObjectName,
+          BUNNYCDN_STORAGE_ZONE_PASSWORD
+        );
+        console.log(`Deleted ${file.ObjectName}:`, result);
+        return result;
+      } catch (error) {
+        console.error(`Error deleting ${file.ObjectName}:`, error);
+        return Promise.reject(error);
+      }
     }
-  }
-  return Promise.resolve();
-});
+    return Promise.resolve();
+  });
 
   const results = await Promise.allSettled(deletePromises);
   return `Deleted ${
