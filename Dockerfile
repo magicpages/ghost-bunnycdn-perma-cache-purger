@@ -1,7 +1,6 @@
 # Stage 1: Build the application
 FROM node:20-alpine as builder
 
-# Set the working directory in the container
 WORKDIR /app
 
 # Copy package.json and yarn.lock files
@@ -31,9 +30,14 @@ COPY --from=builder /app/dist ./dist
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV ENABLE_PROFILING=false
 
 # Expose the port the app runs on
 EXPOSE 3000
 
-# Run the application
-CMD ["node", "dist/index.js"]
+# Conditional command to enable profiling if requested
+CMD if [ "$ENABLE_PROFILING" = "true" ]; then \
+    node --inspect=0.0.0.0:9229 --max-old-space-size=2048 dist/index.js; \
+    else \
+    node dist/index.js; \
+    fi
