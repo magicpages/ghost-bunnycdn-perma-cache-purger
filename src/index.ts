@@ -139,7 +139,13 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
     console.log('Headers:', proxyRes.headers);
   }
 
+  // If you suspect the Content-Encoding is causing issues, you can remove it:
+  delete proxyRes.headers['content-encoding'];
+  delete proxyRes.headers['content-length']; // Content length might change when encoding is altered
+
+  // Stream the response directly to the client without altering it
   proxyRes.pipe(res);
+
   res.on('finish', () => {
     if (proxyRes.headers['x-cache-invalidate']) {
       console.log('Detected x-cache-invalidate header, purging cache...');
