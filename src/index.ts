@@ -10,7 +10,6 @@ import {
   errorHtml,
   SpamRequest,
 } from './util.js';
-import pLimit from 'p-limit';
 
 dotenv.config();
 
@@ -53,10 +52,16 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         req.body = {};
       }
 
+      // List of known spam requests to block
       const knownSpamRequests: SpamRequest[] = [
         {
           url: '/members/api/send-magic-link',
-          conditions: [{ field: 'body.name', value: 'adwdasddwa' }],
+          conditions: [
+            {
+              field: 'body.name',
+              value: 'adwdasddwa',
+            },
+          ],
         },
       ];
 
@@ -67,9 +72,11 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
       const isSpamRequest = knownSpamRequests.some((spamRequest) => {
         if (!req.url.startsWith(spamRequest.url)) return false;
+
         return spamRequest.conditions.every((condition) => {
           const fieldParts = condition.field.split('.');
           let fieldValue: any = req;
+
           for (const part of fieldParts) {
             fieldValue = fieldValue[part];
             if (fieldValue === undefined) {
@@ -79,6 +86,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
               return false;
             }
           }
+
           return String(fieldValue) === String(condition.value);
         });
       });
@@ -100,16 +108,21 @@ const proxy = httpProxy.createProxyServer({
   target: GHOST_URL,
   secure: false,
   changeOrigin: true,
-  selfHandleResponse: false, // Change to false to allow the proxy to handle responses
+  selfHandleResponse: true,
 });
 
-proxy.on('proxyReq', (proxyReq, req, res, options) => {
-  debugLog('Proxying request:', req.method, req.url);
+proxy.on('proxyReq', function (proxyReq, req, res, options) {
+  if (DEBUG) {
+    console.log('Proxying request:', req.method, req.url);
+    console.log('Headers:', req.headers);
+  }
+
   const originalIp =
     req.headers['x-original-forwarded-for'] || req.connection.remoteAddress;
   proxyReq.setHeader('x-forwarded-for', originalIp as string);
   proxyReq.setHeader('x-real-ip', originalIp as string);
 
+  // Send the raw body to Ghost for legitimate requests
   if ((req as any).rawBody && (req as any).rawBody.length > 0) {
     proxyReq.setHeader(
       'Content-Length',
@@ -119,16 +132,30 @@ proxy.on('proxyReq', (proxyReq, req, res, options) => {
   }
 });
 
-proxy.on('proxyRes', (proxyRes, req, res) => {
-  proxyRes.pipe(res); // Stream the response directly to the client
-  debugLog('Proxying response:', proxyRes.statusCode, req.method, req.url);
-
-  if (proxyRes.headers['x-cache-invalidate']) {
-    debugLog('Detected x-cache-invalidate header, purging cache...');
-    purgeCache();
+proxy.on('proxyRes', async (proxyRes, req, res) => {
+  if (DEBUG) {
+    console.log('Proxying response:', proxyRes.statusCode, req.method, req.url);
+    console.log('Headers:', proxyRes.headers);
   }
+
+  let body = Buffer.alloc(0);
+
+  proxyRes.on('data', (data) => {
+    body = Buffer.concat([body, data]);
+  });
+
+  proxyRes.on('end', () => {
+    res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+    res.end(body);
+
+    if (proxyRes.headers['x-cache-invalidate']) {
+      console.log('Detected x-cache-invalidate header, purging cache...');
+      purgeCache();
+    }
+  });
 });
 
+// Error handler replicates the error page from Ghost
 proxy.on('error', (err, req, res) => {
   console.error('Error during proxy operation:', err);
   (res as Response).status(503).send(errorHtml);
@@ -142,14 +169,31 @@ async function purgeCache(): Promise<void> {
   if (BUNNYCDN_PURGE_OLD_CACHE) {
     try {
       const purgeResult = await deleteOldCacheDirectories();
-      debugLog('Cache directories purged:', purgeResult);
+      console.log('Cache directories purged:', purgeResult);
     } catch (error) {
       console.error('Error during cache purge:', error);
     }
   }
-}
 
-const limit = pLimit(5); // Limit the number of concurrent file operations
+  const url = `https://api.bunny.net/pullzone/${BUNNYCDN_PULL_ZONE_ID}/purgeCache`;
+  const options: RequestInit = {
+    method: 'POST',
+    headers: new FetchHeaders({
+      'content-type': 'application/json',
+      AccessKey: BUNNYCDN_API_KEY,
+    }),
+  };
+
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      throw new Error(`Failed to purge cache: ${response.statusText}`);
+    }
+    console.log('Cache purged successfully');
+  } catch (error) {
+    console.error('Failed to purge cache:', error);
+  }
+}
 
 async function deleteOldCacheDirectories(): Promise<string> {
   const pullZoneName = await getPullZoneName(
@@ -162,19 +206,24 @@ async function deleteOldCacheDirectories(): Promise<string> {
     BUNNYCDN_STORAGE_ZONE_PASSWORD
   )) as FileDetail[];
 
-  const deletePromises = files.map((file) =>
-    limit(() => {
-      if (file.ObjectName.includes(pullZoneName)) {
-        return deleteStorageZoneFile(
-          BUNNYCDN_STORAGE_ZONE_NAME,
-          '__bcdn_perma_cache__',
-          file.ObjectName,
-          BUNNYCDN_STORAGE_ZONE_PASSWORD
-        );
-      }
-      return Promise.resolve('Skipped');
-    })
-  );
+const deletePromises = files.map(async (file) => {
+  if (file.ObjectName.includes(pullZoneName)) {
+    try {
+      const result = await deleteStorageZoneFile(
+        BUNNYCDN_STORAGE_ZONE_NAME,
+        '__bcdn_perma_cache__',
+        file.ObjectName,
+        BUNNYCDN_STORAGE_ZONE_PASSWORD
+      );
+      console.log(`Deleted ${file.ObjectName}:`, result);
+      return result;
+    } catch (error) {
+      console.error(`Error deleting ${file.ObjectName}:`, error);
+      return Promise.reject(error);
+    }
+  }
+  return Promise.resolve();
+});
 
   const results = await Promise.allSettled(deletePromises);
   return `Deleted ${
@@ -182,14 +231,9 @@ async function deleteOldCacheDirectories(): Promise<string> {
   } out of ${files.length} directories.`;
 }
 
-function debugLog(message: string, ...data: any[]) {
-  if (DEBUG) {
-    console.log(message, ...data);
-  }
-}
-
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+
   if (DEBUG) {
     console.log('Debug mode enabled');
   }
