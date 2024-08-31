@@ -109,6 +109,7 @@ const proxy = httpProxy.createProxyServer({
   secure: false,
   changeOrigin: true,
   selfHandleResponse: true,
+  proxyTimeout: 5000,
 });
 
 proxy.on('proxyReq', function (proxyReq, req, res, options) {
@@ -145,8 +146,17 @@ proxy.on('proxyRes', async (proxyRes, req, res) => {
   });
 
   proxyRes.on('end', () => {
-    res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
-    res.end(body);
+    const responseBody = body.toString('utf-8');
+
+    if (proxyRes.statusCode && proxyRes.statusCode >= 400) {
+      console.error('Ghost error:', responseBody);
+      res.statusCode = proxyRes.statusCode; // Set the status code
+      res.setHeader('Content-Type', 'application/json'); // Ensure JSON response
+      res.end(JSON.stringify({ error: responseBody })); // Send the JSON error response
+    } else {
+      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+      res.end(body);
+    }
 
     if (proxyRes.headers['x-cache-invalidate']) {
       console.log('Detected x-cache-invalidate header, purging cache...');
@@ -154,6 +164,7 @@ proxy.on('proxyRes', async (proxyRes, req, res) => {
     }
   });
 });
+
 
 // Error handler replicates the error page from Ghost
 proxy.on('error', (err, req, res) => {
