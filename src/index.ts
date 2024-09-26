@@ -37,7 +37,7 @@ async function debouncePurgeCache() {
   cachePurgeTimeout = setTimeout(async () => {
     await purgeCache();
   }, 10000);
-  }
+}
 
 app.set('trust proxy', true);
 
@@ -49,67 +49,72 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (BLOCK_KNOWN_SPAM_REQUESTS && req.method === 'POST') {
-    let rawBody: Buffer = Buffer.alloc(0);
+    const contentType = req.headers['content-type'] || '';
+    if (contentType.includes('application/json')) {
+      let rawBody: Buffer = Buffer.alloc(0);
 
-    req.on('data', (chunk) => {
-      rawBody = Buffer.concat([rawBody, chunk]);
-    });
-
-    req.on('end', () => {
-      try {
-        req.body = JSON.parse(rawBody.toString());
-      } catch (e) {
-        console.error('Failed to parse JSON:', e);
-        req.body = {};
-      }
-
-      // List of known spam requests to block
-      const knownSpamRequests: SpamRequest[] = [
-        {
-          url: '/members/api/send-magic-link',
-          conditions: [
-            {
-              field: 'body.name',
-              value: 'adwdasddwa',
-            },
-          ],
-        },
-      ];
-
-      if (DEBUG) {
-        console.log('Incoming request URL:', req.url);
-        console.log('Incoming request body:', req.body);
-      }
-
-      const isSpamRequest = knownSpamRequests.some((spamRequest) => {
-        if (!req.url.startsWith(spamRequest.url)) return false;
-
-        return spamRequest.conditions.every((condition) => {
-          const fieldParts = condition.field.split('.');
-          let fieldValue: any = req;
-
-          for (const part of fieldParts) {
-            fieldValue = fieldValue[part];
-            if (fieldValue === undefined) {
-              if (DEBUG) {
-                console.log(`Field ${condition.field} not found in request.`);
-              }
-              return false;
-            }
-          }
-
-          return String(fieldValue) === String(condition.value);
-        });
+      req.on('data', (chunk) => {
+        rawBody = Buffer.concat([rawBody, chunk]);
       });
 
-      if (isSpamRequest) {
-        console.log('Blocked known spam request:', req.url, req.body);
-        return res.status(403).send('Forbidden');
-      }
+      req.on('end', () => {
+        try {
+          req.body = JSON.parse(rawBody.toString());
+        } catch (e) {
+          console.error('Failed to parse JSON:', e);
+          req.body = {};
+        }
 
-      (req as any).rawBody = rawBody;
+        // List of known spam requests to block
+        const knownSpamRequests: SpamRequest[] = [
+          {
+            url: '/members/api/send-magic-link',
+            conditions: [
+              {
+                field: 'body.name',
+                value: 'adwdasddwa',
+              },
+            ],
+          },
+        ];
+
+        if (DEBUG) {
+          console.log('Incoming request URL:', req.url);
+          console.log('Incoming request body:', req.body);
+        }
+
+        const isSpamRequest = knownSpamRequests.some((spamRequest) => {
+          if (!req.url.startsWith(spamRequest.url)) return false;
+
+          return spamRequest.conditions.every((condition) => {
+            const fieldParts = condition.field.split('.');
+            let fieldValue: any = req;
+
+            for (const part of fieldParts) {
+              fieldValue = fieldValue[part];
+              if (fieldValue === undefined) {
+                if (DEBUG) {
+                  console.log(`Field ${condition.field} not found in request.`);
+                }
+                return false;
+              }
+            }
+
+            return String(fieldValue) === String(condition.value);
+          });
+        });
+
+        if (isSpamRequest) {
+          console.log('Blocked known spam request:', req.url, req.body);
+          return res.status(403).send('Forbidden');
+        }
+
+        (req as any).rawBody = rawBody;
+        next();
+      });
+    } else {
       next();
-    });
+    }
   } else {
     next();
   }
@@ -133,13 +138,16 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
   proxyReq.setHeader('x-forwarded-for', originalIp as string);
   proxyReq.setHeader('x-real-ip', originalIp as string);
 
-  // Send the raw body to Ghost for legitimate requests
+  // Only write the rawBody if it exists (from JSON parsing)
   if ((req as any).rawBody && (req as any).rawBody.length > 0) {
     proxyReq.setHeader(
       'Content-Length',
       (req as any).rawBody.length.toString()
     );
     proxyReq.write((req as any).rawBody);
+  } else {
+    // For non-JSON bodies, let the stream continue without interference
+    req.pipe(proxyReq);
   }
 });
 
@@ -149,7 +157,7 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
     console.log('Headers:', proxyRes.headers);
   }
 
-  // Ensure that we set the headers before streaming the response
+  // Set the headers before streaming the response
   res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
 
   // Stream the response data directly to the client to avoid buffering large files in memory
