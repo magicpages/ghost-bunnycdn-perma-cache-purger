@@ -28,6 +28,17 @@ const BUNNYCDN_STORAGE_ZONE_PASSWORD =
 const BLOCK_KNOWN_SPAM_REQUESTS =
   process.env.BLOCK_KNOWN_SPAM_REQUESTS !== 'false';
 
+let cachePurgeTimeout: NodeJS.Timeout | null = null;
+
+async function debouncePurgeCache() {
+  if (cachePurgeTimeout) {
+    clearTimeout(cachePurgeTimeout);
+  }
+  cachePurgeTimeout = setTimeout(async () => {
+    await purgeCache();
+  }, 10000);
+  }
+
 app.set('trust proxy', true);
 
 // Normalize URL paths to avoid issues with double slashes
@@ -37,7 +48,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 app.use((req: Request, res: Response, next: NextFunction) => {
-  if (BLOCK_KNOWN_SPAM_REQUESTS && req.method === 'POST') {
+  if (BLOCK_KNOWN_SPAM_REQUESTS && req.method === 'POST' && req.is('application/json')) {
     let rawBody: Buffer = Buffer.alloc(0);
 
     req.on('data', (chunk) => {
@@ -132,25 +143,24 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
   }
 });
 
-proxy.on('proxyRes', async (proxyRes, req, res) => {
+proxy.on('proxyRes', (proxyRes, req, res) => {
   if (DEBUG) {
     console.log('Proxying response:', proxyRes.statusCode, req.method, req.url);
     console.log('Headers:', proxyRes.headers);
   }
 
-  let body = Buffer.alloc(0);
+  // Ensure that we set the headers before streaming the response
+  res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
 
-  proxyRes.on('data', (data) => {
-    body = Buffer.concat([body, data]);
-  });
+  // Stream the response data directly to the client to avoid buffering large files in memory
+  proxyRes.pipe(res);
 
   proxyRes.on('end', () => {
-    res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
-    res.end(body);
-
     if (proxyRes.headers['x-cache-invalidate']) {
-      console.log('Detected x-cache-invalidate header, purging cache...');
-      purgeCache();
+      console.log(
+        'Detected x-cache-invalidate header, scheduling cache purge...'
+      );
+      debouncePurgeCache();
     }
   });
 });
