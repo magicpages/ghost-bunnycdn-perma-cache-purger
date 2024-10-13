@@ -161,9 +161,18 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
   if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
     console.log(`Handling redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
     
-    const redirectUrl = new URL(proxyRes.headers.location);
+    let redirectUrl: URL;
+    try {
+      // Try to create a URL object directly (for absolute URLs)
+      redirectUrl = new URL(proxyRes.headers.location);
+    } catch {
+      // If that fails, it's a relative URL, so we prepend the GHOST_URL
+      redirectUrl = new URL(proxyRes.headers.location, GHOST_URL);
+    }
+
+    // Update the request properties
     req.url = redirectUrl.pathname + redirectUrl.search;
-    req.headers.host = redirectUrl.hostname;
+    req.method = 'GET'; // Most redirects should be GET requests
 
     // Proxy the modified request
     proxy.web(req, res, { target: GHOST_URL });
