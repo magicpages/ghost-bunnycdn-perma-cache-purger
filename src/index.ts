@@ -10,6 +10,7 @@ import {
   errorHtml,
   SpamRequest,
 } from './util.js';
+import { IncomingMessage, ServerResponse } from 'http';
 
 dotenv.config();
 
@@ -159,24 +160,23 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
   // Handle redirects (status codes 301, 302, 303, 307, 308)
   if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
     console.log(`Handling redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
-    res.writeHead(proxyRes.statusCode, {
-      'Location': proxyRes.headers.location
-    });
-    res.end();
+    
+    const redirectUrl = new URL(proxyRes.headers.location);
+    req.url = redirectUrl.pathname + redirectUrl.search;
+    req.headers.host = redirectUrl.hostname;
+
+    // Proxy the modified request
+    proxy.web(req, res, { target: GHOST_URL });
     return;
   }
 
-  // Ensure that we set the headers before streaming the response
+  // For non-redirected requests, pass through the response without buffering
   res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
-
-  // Stream the response data directly to the client to avoid buffering large files in memory
   proxyRes.pipe(res);
 
   proxyRes.on('end', () => {
     if (proxyRes.headers['x-cache-invalidate']) {
-      console.log(
-        'Detected x-cache-invalidate header, scheduling cache purge...'
-      );
+      console.log('Detected x-cache-invalidate header, scheduling cache purge...');
       debouncePurgeCache();
     }
   });
