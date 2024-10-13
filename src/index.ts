@@ -156,17 +156,15 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
     console.log('Headers:', proxyRes.headers);
   }
 
-  // Handle all redirects (including 302)
-  if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-    console.log(`Handling redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
-    
-    // Pass through the redirect response
+  // Handle redirects (status codes 300-399)
+  if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400) {
+    console.log(`Passing through redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     res.end();
     return;
   }
 
-  // For non-redirected requests, pass through the response without buffering
+  // For non-redirected requests, pass through the response without modification
   res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
   proxyRes.pipe(res);
 
