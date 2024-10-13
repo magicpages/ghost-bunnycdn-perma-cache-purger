@@ -120,6 +120,8 @@ const proxy = httpProxy.createProxyServer({
   secure: false,
   changeOrigin: true,
   selfHandleResponse: true,
+  // followRedirects: true,
+  // proxyTimeout: 30000,
 });
 
 proxy.on('proxyReq', function (proxyReq, req, res, options) {
@@ -132,6 +134,11 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
     req.headers['x-original-forwarded-for'] || req.connection.remoteAddress;
   proxyReq.setHeader('x-forwarded-for', originalIp as string);
   proxyReq.setHeader('x-real-ip', originalIp as string);
+
+  // Preserve original headers
+  // Object.keys(req.headers).forEach(function (key) {
+  //   proxyReq.setHeader(key, req.headers[key] as string);
+  // });
 
   // Send the raw body to Ghost for legitimate requests
   if ((req as any).rawBody && (req as any).rawBody.length > 0) {
@@ -147,6 +154,16 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
   if (DEBUG) {
     console.log('Proxying response:', proxyRes.statusCode, req.method, req.url);
     console.log('Headers:', proxyRes.headers);
+  }
+
+  // Handle redirects (status codes 301, 302, 303, 307, 308)
+  if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+    console.log(`Handling redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
+    res.writeHead(proxyRes.statusCode, {
+      'Location': proxyRes.headers.location
+    });
+    res.end();
+    return;
   }
 
   // Ensure that we set the headers before streaming the response
