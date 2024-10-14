@@ -115,6 +115,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
 });
 
+let requestCounter = 0;
+
 const proxy = httpProxy.createProxyServer({
   target: GHOST_URL,
   secure: false,
@@ -125,10 +127,11 @@ const proxy = httpProxy.createProxyServer({
 });
 
 proxy.on('proxyReq', function (proxyReq, req, res, options) {
-  if (DEBUG) {
-    console.log('Proxying request:', req.method, req.url);
-    console.log('Headers:', req.headers);
-  }
+  const requestId = ++requestCounter;
+  (req as any).requestId = requestId;
+
+  console.log(`[${requestId}] Incoming request: ${req.method} ${req.url}`);
+  console.log(`[${requestId}] Headers:`, JSON.stringify(req.headers, null, 2));
 
   const originalIp =
     req.headers['x-original-forwarded-for'] || req.connection.remoteAddress;
@@ -151,28 +154,24 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
 });
 
 proxy.on('proxyRes', (proxyRes, req, res) => {
-  if (DEBUG) {
-    console.log('Proxying response:', proxyRes.statusCode, req.method, req.url);
-    console.log('Headers:', proxyRes.headers);
-  }
+  const requestId = (req as any).requestId;
 
-  // Handle redirects (status codes 300-399)
+  console.log(`[${requestId}] Outgoing response: ${proxyRes.statusCode} ${req.method} ${req.url}`);
+  console.log(`[${requestId}] Response headers:`, JSON.stringify(proxyRes.headers, null, 2));
+
   if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400) {
-    console.log(`Passing through redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
-    res.writeHead(proxyRes.statusCode, proxyRes.headers);
-    res.end();
-    return;
+    console.log(`[${requestId}] Redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
   }
 
-  // For non-redirected requests, pass through the response without modification
   res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
   proxyRes.pipe(res);
 
   proxyRes.on('end', () => {
     if (proxyRes.headers['x-cache-invalidate']) {
-      console.log('Detected x-cache-invalidate header, scheduling cache purge...');
+      console.log(`[${requestId}] Detected x-cache-invalidate header, scheduling cache purge...`);
       debouncePurgeCache();
     }
+    console.log(`[${requestId}] Request completed`);
   });
 });
 
