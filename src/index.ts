@@ -10,6 +10,7 @@ import {
   errorHtml,
   SpamRequest,
 } from './util.js';
+import * as crypto from 'crypto';
 
 dotenv.config();
 
@@ -126,12 +127,37 @@ const proxy = httpProxy.createProxyServer({
   // proxyTimeout: 30000,
 });
 
+// Generate a unique ID for this instance of the proxy
+const proxyInstanceId = crypto.randomBytes(4).toString('hex');
+
 proxy.on('proxyReq', function (proxyReq, req, res, options) {
-  const requestId = ++requestCounter;
+  const requestId = crypto.randomBytes(8).toString('hex');
   (req as any).requestId = requestId;
 
-  console.log(`[${requestId}] Incoming request: ${req.method} ${req.url}`);
-  console.log(`[${requestId}] Headers:`, JSON.stringify(req.headers, null, 2));
+  const clientIp = req.headers['x-original-forwarded-for'] || 
+                   req.headers['x-forwarded-for'] || 
+                   req.connection.remoteAddress;
+
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    proxyInstanceId: proxyInstanceId,
+    requestId: requestId,
+    method: req.method,
+    url: req.url,
+    clientIp: clientIp,
+    bunnyRequestId: req.headers['cdn-requestid'],
+    bunnyPullZoneId: req.headers['cdn-pullzoneid'],
+    bunnyLoopCount: req.headers['cdn-loopcount'],
+    xForwardedFor: req.headers['x-forwarded-for'],
+    xOriginalForwardedFor: req.headers['x-original-forwarded-for'],
+    host: req.headers['host'],
+    userAgent: req.headers['user-agent']
+  };
+
+  console.log('INCOMING_REQUEST', JSON.stringify(logEntry));
+
+  // Set a custom header with our proxy instance ID and request ID
+  proxyReq.setHeader('X-Proxy-Instance', `${proxyInstanceId}:${requestId}`);
 
   // Preserve the original client IP
   const originalIp = req.headers['x-original-forwarded-for'] || 
@@ -164,8 +190,19 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
 proxy.on('proxyRes', (proxyRes, req, res) => {
   const requestId = (req as any).requestId;
 
-  console.log(`[${requestId}] Outgoing response: ${proxyRes.statusCode} ${req.method} ${req.url}`);
-  console.log(`[${requestId}] Response headers:`, JSON.stringify(proxyRes.headers, null, 2));
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    proxyInstanceId: proxyInstanceId,
+    requestId: requestId,
+    method: req.method,
+    url: req.url,
+    statusCode: proxyRes.statusCode,
+    location: proxyRes.headers['location'],
+    xBunnyHandleRedirect: proxyRes.headers['x-bunny-handle-redirect'],
+    xProxyInstance: proxyRes.headers['x-proxy-instance']
+  };
+
+  console.log('OUTGOING_RESPONSE', JSON.stringify(logEntry));
 
   if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400) {
     console.log(`[${requestId}] Redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
