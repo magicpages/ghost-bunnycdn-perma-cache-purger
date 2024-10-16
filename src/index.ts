@@ -133,9 +133,17 @@ proxy.on('proxyReq', function (proxyReq, req, res, options) {
   console.log(`[${requestId}] Incoming request: ${req.method} ${req.url}`);
   console.log(`[${requestId}] Headers:`, JSON.stringify(req.headers, null, 2));
 
-  const originalIp =
-    req.headers['x-original-forwarded-for'] || req.connection.remoteAddress;
-  proxyReq.setHeader('x-forwarded-for', originalIp as string);
+  // Preserve the original client IP
+  const originalIp = req.headers['x-original-forwarded-for'] || 
+                     req.headers['x-forwarded-for'] || 
+                     req.connection.remoteAddress;
+  
+  // Append our proxy's IP to the x-forwarded-for chain
+  const forwardedFor = req.headers['x-forwarded-for'] 
+    ? `${req.headers['x-forwarded-for']}, ${req.connection.remoteAddress}`
+    : originalIp;
+
+  proxyReq.setHeader('x-forwarded-for', forwardedFor as string);
   proxyReq.setHeader('x-real-ip', originalIp as string);
 
   // Preserve original headers
@@ -161,6 +169,7 @@ proxy.on('proxyRes', (proxyRes, req, res) => {
 
   if (proxyRes.statusCode && proxyRes.statusCode >= 300 && proxyRes.statusCode < 400) {
     console.log(`[${requestId}] Redirect: ${proxyRes.statusCode} to ${proxyRes.headers.location}`);
+    proxyRes.headers['X-Bunny-Handle-Redirect'] = 'true';
   }
 
   res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
