@@ -33,70 +33,47 @@ The `magicpages/bunnycdn-perma-cache-purger` Docker image is available on [Docke
 - `BUNNYCDN_PURGE_OLD_CACHE`: Set to `true`to enable deleting old cache files from the storage zone.
 - `BUNNYCDN_STORAGE_ZONE_NAME`: Required if `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`. The name of the BunnyCDN storage zone connected to the pull zone.
 - `BUNNYCDN_STORAGE_ZONE_PASSWORD`: Required if `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`. The password of the BunnyCDN storage zone connected to the pull zone. This differs from the API key. See [Bunny's Edge Storage API documentation](https://docs.bunny.net/reference/storage-api) for more information.
-- BLOCK_KNOWN_SPAM_REQUESTS: Set to true (default) to block known spam requests. Set to false to disable this feature.
 
 These variables must be set in the Docker Compose file or as part of your Docker container configuration.
 
 ### Example Docker Compose Configuration
 
-The `docker-compose.yml` is a functional example of how to deploy Ghost, MySQL, and the BunnyCDN Perma-Cache Purger as part of a Docker Compose stack.
+Here's a minimal example of how to deploy Ghost with the BunnyCDN Perma-Cache Purger:
 
 ```yaml
 version: '3.8'
 
 services:
-  mysql:
-    image: mysql:8
-    environment:
-      MYSQL_ROOT_PASSWORD: example
-      MYSQL_DATABASE: ghost
-      MYSQL_USER: ghost
-      MYSQL_PASSWORD: ghost
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
-
   ghost:
-    image: ghost:latest
+    image: ghost:5
     environment:
-      url: http://localhost:2368
-      database__client: mysql
-      database__connection__host: mysql
-      database__connection__user: ghost
-      database__connection__password: ghost
-      database__connection__database: ghost
+      url: http://localhost:4000
+      database__client: sqlite3
+      database__connection__filename: /var/lib/ghost/content/data/ghost.db
     volumes:
       - ghost_data:/var/lib/ghost/content
-    depends_on:
-      mysql:
-        condition: service_healthy
 
-  bunnycdn-perma-cache-purger:
+  proxy:
     image: magicpages/bunnycdn-perma-cache-purger:latest
     environment:
-      GHOST_URL: http://ghost:2368
-      BUNNYCDN_API_KEY: your_bunnycdn_api_key
-      BUNNYCDN_PULL_ZONE_ID: your_pull_zone_id
-      BUNNYCDN_PURGE_OLD_CACHE: "true"
-      BUNNYCDN_STORAGE_ZONE_NAME: your_storage_zone_name
-      BUNNYCDN_STORAGE_ZONE_PASSWORD: your_storage_zone_password
-    depends_on:
-      ghost:
-        condition: service_started
+      - GHOST_URL=http://ghost:2368
+      - PORT=4000
+      - DEBUG=true
+      - BUNNYCDN_API_KEY=your_bunnycdn_api_key
+      - BUNNYCDN_PULL_ZONE_ID=your_pull_zone_id
+      - BUNNYCDN_PURGE_OLD_CACHE=true
+      - BUNNYCDN_STORAGE_ZONE_NAME=your_storage_zone_name
+      - BUNNYCDN_STORAGE_ZONE_PASSWORD=your_storage_zone_password
     ports:
-      - "2368:3000"
+      - "4000:4000"
+    depends_on:
+      - ghost
 
 volumes:
   ghost_data:
-  mysql_data:
 ```
 
-In this example, the Ghost CMS instance is accessible at `http://localhost:2368`. Port `2368` is usually the default port on which Ghost listens, but since we want to catch the `X-Cache-Invalidate` header, we don't expose Ghost directly. Instead, the proxy listens on that port and forwards requests to Ghost.
+In this example, the Ghost CMS instance is accessible at `http://localhost:4000`. The proxy listens on port 4000 and forwards requests to Ghost's internal port 2368.
 
 ## How It Works
 In a nutshell, this proxy forwards all incoming requests to the Ghost instance that's specified in the `GHOST_URL` environment variable. All responses from Ghost are forwarded back to the client, while the proxy monitors the responses for the `X-Cache-Invalidate` header.
@@ -104,20 +81,14 @@ In a nutshell, this proxy forwards all incoming requests to the Ghost instance t
 If the header is present, the proxy sends a purge request to the BunnyCDN API to clear the cache of the specified pull zone. If `BUNNYCDN_PURGE_OLD_CACHE` is set to `true`, it also deletes old directories from the specified storage zone to manage storage costs effectively.
 
 ### Under the Hood
-The proxy is built using Node.js and a simple Express server. Nothing fancy, just a few lines of code to handle the requests and responses.
+The proxy is built using Node.js and Express, with TypeScript for type safety. It includes:
+- Automatic retries for failed API calls
+- Connection pooling for better performance
+- Parallel processing of cache purge operations
+- Health check endpoint at `/health`
+- Detailed performance logging when `DEBUG=true`
 
 And yes, that is the exact code that's running in production at Magic Pages 😉
-
-### Blocking known spam requests
-
-The BLOCK_KNOWN_SPAM_REQUESTS environment variable allows you to block spam requests targeting Ghost CMS. By default, this feature is enabled. The middleware will inspect incoming requests and block any that match known spam patterns.
-
-#### Known Spam Requests
-| Spam Pattern                 | Request Property | Value      | Description                                           |   |
-|------------------------------|------------------|------------|-------------------------------------------------------|---|
-| /members/api/send-magic-link | name             | adwdasddwa | Blocks spam signup attempts using this specific name. |   |
-
-This feature is particularly useful if you're experiencing targeted spam attacks that repeatedly use the same name or other identifying features in the requests. You can extend this table and the corresponding middleware logic as needed to block additional patterns. PRs for other known spam requests are very welcome.
 
 ## License
 This project is licensed under the MIT License, so feel free to do whatever you want with it. If you find it useful, I'd love to hear about it!
