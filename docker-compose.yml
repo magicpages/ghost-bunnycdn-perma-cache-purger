@@ -1,49 +1,32 @@
 version: '3.8'
 
 services:
-  mysql:
-    image: mysql:8
-    environment:
-      MYSQL_ROOT_PASSWORD: example
-      MYSQL_DATABASE: ghost
-      MYSQL_USER: ghost
-      MYSQL_PASSWORD: ghost
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
-
   ghost:
-    image: ghost:latest
+    image: ghost:5
     environment:
-      url: http://localhost:2368
-      database__client: mysql
-      database__connection__host: mysql
-      database__connection__user: ghost
-      database__connection__password: ghost
-      database__connection__database: ghost
+      url: http://localhost:4000
+      database__client: sqlite3
+      database__connection__filename: /var/lib/ghost/content/data/ghost.db
     volumes:
       - ghost_data:/var/lib/ghost/content
-    depends_on:
-      mysql:
-        condition: service_healthy
 
-  bunnycdn-perma-cache-purger:
-    image: magicpages/bunnycdn-perma-cache-purger:latest
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
-      GHOST_URL: http://ghost:2368
-      BUNNYCDN_API_KEY: your_bunnycdn_api_key
-      BUNNYCDN_PULL_ZONE_ID: your_pull_zone_id
-    depends_on:
-      ghost:
-        condition: service_started
+      - GHOST_URL=http://ghost:2368
+      - PORT=4000
+      - DEBUG=true
+      - BUNNYCDN_API_KEY=<your-bunnycdn-api-key>
+      - BUNNYCDN_PULL_ZONE_ID=<your-bunnycdn-pull-zone-id>
+      - BUNNYCDN_PURGE_OLD_CACHE=true
+      - BUNNYCDN_STORAGE_ZONE_NAME=<your-bunnycdn-storage-zone-name>
+      - BUNNYCDN_STORAGE_ZONE_PASSWORD=<your-bunnycdn-storage-zone-password>
     ports:
-      - "2368:3000"
+      - "4000:4000"
+    depends_on:
+      - ghost
 
 volumes:
   ghost_data:
-  mysql_data:
