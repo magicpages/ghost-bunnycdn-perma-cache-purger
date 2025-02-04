@@ -9,19 +9,24 @@ const baseSchema = z.object({
   DEBUG: z.string().transform(val => val === 'true').default('false'),
   BUNNYCDN_API_KEY: z.string().min(1),
   BUNNYCDN_PULL_ZONE_ID: z.string().min(1),
-  BUNNYCDN_PURGE_OLD_CACHE: z.string().transform(val => val === 'true').default('false'),
 });
 
-const configSchema = z.discriminatedUnion('BUNNYCDN_PURGE_OLD_CACHE', [
-  baseSchema.extend({
-    BUNNYCDN_PURGE_OLD_CACHE: z.literal(true),
-    BUNNYCDN_STORAGE_ZONE_NAME: z.string().min(1),
-    BUNNYCDN_STORAGE_ZONE_PASSWORD: z.string().min(1),
-  }),
-  baseSchema.extend({
-    BUNNYCDN_PURGE_OLD_CACHE: z.literal(false),
-  })
-]);
+const configSchema = z.object({
+  ...baseSchema.shape,
+  BUNNYCDN_PURGE_OLD_CACHE: z.string().transform(val => val === 'true').default('false'),
+  BUNNYCDN_STORAGE_ZONE_NAME: z.string().min(1).optional(),
+  BUNNYCDN_STORAGE_ZONE_PASSWORD: z.string().min(1).optional(),
+}).refine(
+  (data) => {
+    if (data.BUNNYCDN_PURGE_OLD_CACHE) {
+      return !!data.BUNNYCDN_STORAGE_ZONE_NAME && !!data.BUNNYCDN_STORAGE_ZONE_PASSWORD;
+    }
+    return true;
+  },
+  {
+    message: "Storage zone configuration required when BUNNYCDN_PURGE_OLD_CACHE is true"
+  }
+);
 
 export function loadConfig(): ProxyConfig {
   dotenv.config();
