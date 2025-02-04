@@ -48,8 +48,8 @@ export class ProxyManager {
     res: Response,
     options: httpProxy.ServerOptions
   ): void {
+    console.log('🔄 Proxying request:', req.method, req.url);
     if (this.config.debug) {
-      console.log('🔄 Proxying request:', req.method, req.url);
       console.log('📋 Headers:', req.headers);
     }
 
@@ -68,9 +68,9 @@ export class ProxyManager {
     req: Request,
     res: Response
   ): void {
+    console.log('↩️ Response:', proxyRes.statusCode, req.method, req.url);
     if (this.config.debug) {
-      console.log('↩️ Proxying response:', proxyRes.statusCode, req.method, req.url);
-      console.log('📋 Headers:', proxyRes.headers);
+      console.log('📋 Response headers:', proxyRes.headers);
     }
 
     res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);

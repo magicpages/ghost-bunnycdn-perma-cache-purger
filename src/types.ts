@@ -6,8 +6,8 @@ export interface ProxyConfig {
     apiKey: string;
     pullZoneId: string;
     purgeOldCache: boolean;
-    storageZoneName: string;
-    storageZonePassword: string;
+    storageZoneName?: string;
+    storageZonePassword?: string;
   };
   security: {
     trustProxy: boolean;

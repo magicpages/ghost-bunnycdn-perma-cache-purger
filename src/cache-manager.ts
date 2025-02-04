@@ -64,23 +64,26 @@ export class CacheManager {
   }
 
   private async purgeStorageCache(): Promise<void> {
+    const { storageZoneName, storageZonePassword } = this.config.bunnycdn;
+    if (!storageZoneName || !storageZonePassword) {
+      throw new Error('Storage zone configuration missing but purgeOldCache is enabled');
+    }
+
     const startTime = performance.now();
     console.log('🔍 Starting cache purge operations...');
     
-    // Get pull zone name and list files in parallel with retry
-    const fetchStartTime = performance.now();
+    // Now TypeScript knows these are strings
     const [pullZoneName, files] = await Promise.all([
       withRetry(() => getPullZoneName(
         this.config.bunnycdn.pullZoneId,
         this.config.bunnycdn.apiKey
       )),
       withRetry(() => listStorageZoneFiles(
-        this.config.bunnycdn.storageZoneName,
+        storageZoneName,
         '__bcdn_perma_cache__',
-        this.config.bunnycdn.storageZonePassword
+        storageZonePassword
       ) as Promise<FileDetail[]>)
     ]);
-    console.log(`📡 Fetched zone info and file list in ${(performance.now() - fetchStartTime).toFixed(0)}ms`);
 
     const matchingFiles = (files as FileDetail[]).filter(file => 
       file.ObjectName.includes(pullZoneName)
@@ -95,10 +98,10 @@ export class CacheManager {
     for (let i = 0; i < matchingFiles.length; i += concurrencyLimit) {
       const batch = matchingFiles.slice(i, i + concurrencyLimit).map(file => 
         withRetry(() => deleteStorageZoneFile(
-          this.config.bunnycdn.storageZoneName,
+          storageZoneName,
           '__bcdn_perma_cache__',
           file.ObjectName,
-          this.config.bunnycdn.storageZonePassword
+          storageZonePassword
         ))
       );
       const batchResults = await Promise.allSettled(batch);
