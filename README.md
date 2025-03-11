@@ -1,3 +1,7 @@
+⚠️ **DEPRECATED** ⚠️
+
+This repository is deprecated in favour of [ghost-cache-invalidation-proxy](https://github.com/magicpages/ghost-cache-invalidation-proxy) as a more versatile implementation. From Magic Pages side, the latter will be developed further.
+
 # Ghost BunnyCDN Perma-Cache Purger
 
 ## Overview
